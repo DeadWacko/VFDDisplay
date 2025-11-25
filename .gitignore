@@ -1,0 +1,21 @@
+# build-артефакты
+build/
+cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+*.elf
+*.uf2
+*.bin
+*.hex
+*.map
+*.log
+
+# VS Code
+.vscode/
+
+# Misc
+*.swp
+*.swo
+*.tmp
+*.bak
+.DS_Store
