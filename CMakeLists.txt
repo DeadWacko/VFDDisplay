@@ -6,9 +6,6 @@ set(CMAKE_C_STANDARD 11)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-# Initialise pico_sdk from installed location
-# (note this can come from environment, CMake cache etc)
-
 # == DO NOT EDIT THE FOLLOWING LINES for the Raspberry Pi Pico VS Code Extension to work ==
 if(WIN32)
     set(USERHOME $ENV{USERPROFILE})
@@ -23,6 +20,7 @@ if (EXISTS ${picoVscode})
     include(${picoVscode})
 endif()
 # ====================================================================================
+
 set(PICO_BOARD pico_w CACHE STRING "Board type")
 
 # Pull in Raspberry Pi Pico SDK (must be before project)
@@ -33,38 +31,45 @@ project(VFDDisplay C CXX ASM)
 # Initialise the Raspberry Pi Pico SDK
 pico_sdk_init()
 
-# Add executable. Default name is the project name, version 0.1
-
-add_executable(VFDDisplay VFDDisplay.c display.c)
-
-pico_set_program_name(VFDDisplay "VFDDisplay")
-pico_set_program_version(VFDDisplay "0.1")
-
-# Modify the below lines to enable/disable output over UART/USB
-pico_enable_stdio_uart(VFDDisplay 1)
-pico_enable_stdio_usb(VFDDisplay 0)
-
-
-
-
-# Add the standard library to the build
-target_link_libraries(VFDDisplay
-pico_stdlib hardware_rtc hardware_spi   
-
-
-pico_multicore
-hardware_adc)
-
-# Add the standard include files to the build
-target_include_directories(VFDDisplay PRIVATE
-        ${CMAKE_CURRENT_LIST_DIR}
+#
+# 1. Библиотека драйвера дисплея
+#
+#
+# 1. Библиотека драйвера дисплея
+#
+add_library(vfd_display
+    src/display.c
 )
-add_definitions(-DDEBUG_COLORS)  # Включаем цветной вывод
 
-# Add any user requested libraries
-target_link_libraries(VFDDisplay 
-        
-        )
+# Публичные заголовки
+target_include_directories(vfd_display
+    PUBLIC
+        ${CMAKE_CURRENT_LIST_DIR}/include
+)
 
-pico_add_extra_outputs(VFDDisplay)
+# Общие дефайны для библиотеки
+target_compile_definitions(vfd_display
+    PUBLIC
+        DEBUG_COLORS
+)
 
+# Подключаем Pico SDK-библиотеки, чтобы были доступны заголовки
+# "pico/stdlib.h", "hardware/..." и чтобы далее примеры могли линковаться.
+target_link_libraries(vfd_display
+    PUBLIC
+        pico_stdlib
+        hardware_timer
+        hardware_adc
+        hardware_rtc
+        hardware_sync
+)
+
+
+#
+# 2. Примеры
+#
+add_subdirectory(examples/clock_stress_test)
+
+# На будущее:
+# add_subdirectory(examples/clock_basic)
+# add_subdirectory(examples/fx_showcase)
