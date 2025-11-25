@@ -14,3 +14,6 @@
 ## Статус
 
 Проект в активной разработке. Архитектура и API могут меняться.
+
+
+![Alt](https://repobeats.axiom.co/api/embed/667af31724a397a80145bcd649f675addee2cbaa.svg "Repobeats analytics image")
