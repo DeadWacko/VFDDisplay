@@ -39,6 +39,12 @@ typedef struct
 
     // Для будущих таймеров эффектов/оверлеев
     absolute_time_t last_update;
+
+    // --- мигающая точка/двоеточие ---
+    bool           dot_blink_enabled;  // включено ли мигание
+    bool           dot_state;          // текущее состояние точки (горит / нет)
+    uint32_t       dot_period_ms;      // период мигания, мс
+    absolute_time_t dot_last_toggle;   // последний момент переключения
 } display_core_state_t;
 
 static display_core_state_t s_core;
@@ -76,14 +82,20 @@ void display_init(uint8_t digit_count)
     display_ll_start_refresh();
 
     memset(&s_core, 0, sizeof(s_core));
-    s_core.digit_count = digit_count;
+    s_core.digit_count       = digit_count;
     s_core.global_brightness = VFD_MAX_BRIGHTNESS;
 
     for (uint8_t i = 0; i < digit_count; i++)
         s_core.hl_buffer[i] = 0;
 
-    s_core.mode = DISPLAY_MODE_CONTENT;
+    s_core.mode        = DISPLAY_MODE_CONTENT;
     s_core.last_update = get_absolute_time();
+
+    // --- инициализация мигания точки/двоеточия ---
+    s_core.dot_blink_enabled = false;
+    s_core.dot_state         = false;
+    s_core.dot_period_ms     = 1000;              // 1 Гц
+    s_core.dot_last_toggle   = get_absolute_time();
 }
 
 display_mode_t display_get_mode(void)
@@ -122,11 +134,26 @@ void display_set_auto_brightness(bool enable)
     (void)enable;
 }
 
-
-void display_set_brightness_night(bool enabled)
+void display_set_night_mode(bool enable)
 {
     // Пока нет night-логики
-    (void)enabled;
+    (void)enable;
+}
+
+/* ---------- ТОЧКА / ДВОЕТОЧИЕ ---------- */
+
+void display_set_dot_blinking(bool enable)
+{
+    s_core.dot_blink_enabled = enable;
+    s_core.dot_state         = false;
+    s_core.dot_last_toggle   = get_absolute_time();
+
+    if (!enable && s_core.digit_count >= 4) {
+        // при выключении мигания просто гасим точки
+        s_core.hl_buffer[1] &= (vfd_seg_t)~0x80;
+        s_core.hl_buffer[2] &= (vfd_seg_t)~0x80;
+        hl_push_buffer_to_ll();
+    }
 }
 
 /* ============================================================
@@ -148,7 +175,30 @@ void display_core_set_buffer(const vfd_seg_t *buf, uint8_t size)
 
 void display_process(void)
 {
-    // Пока ядро ничего не делает — эффекты и оверлеи добавим позже.
-    // Но функция уже нужна, чтобы пользовательский код мог вызывать её
-    // в своих циклах, как было раньше в display.c.
+    absolute_time_t now = get_absolute_time();
+
+    // --- мигание точки  (формат HH.MM на 4+ разрядах) ---
+    if (s_core.dot_blink_enabled && s_core.digit_count >= 4) {
+        uint32_t now_ms  = to_ms_since_boot(now);
+        uint32_t last_ms = to_ms_since_boot(s_core.dot_last_toggle);
+
+        if (now_ms - last_ms >= s_core.dot_period_ms) {
+            s_core.dot_last_toggle = now;
+            s_core.dot_state       = !s_core.dot_state;
+
+            if (s_core.dot_state) {
+                // включаем DP (бит 7) у 2 и 3 разрядов
+                s_core.hl_buffer[1] |=  0x80;
+                
+            } else {
+                // выключаем DP
+                s_core.hl_buffer[1] &= (vfd_seg_t)~0x80;
+                
+            }
+
+            hl_push_buffer_to_ll();
+        }
+    }
+
+    // Здесь позже появятся эффекты/оверлеи/автояркость и т.п.
 }

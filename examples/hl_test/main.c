@@ -22,10 +22,10 @@ int main(void)
     stdio_init_all();
     sleep_ms(500);
 
-    // Предполагаем 4 разряда, как у тебя сейчас
+    
     display_init(4);
 
-    // Максимальная яркость
+    
     display_set_brightness(255);
 
     printf("HL test: init done, starting demo...\n");
@@ -64,6 +64,7 @@ int main(void)
     uint8_t hours = 12;
     uint8_t minutes = 0;
     uint32_t tick = 0;
+    display_set_dot_blinking(true);
 
     while (true) {
         // Каждую секунду увеличиваем минуты (условный софт-RTC)

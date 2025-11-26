@@ -104,6 +104,10 @@ void display_set_night_mode(bool enable);
 /* Автоприглушение (будет использовать датчик) */
 void display_set_auto_brightness(bool enable);
 
+/* Управление миганием точки/двоеточия в режиме времени HH:MM.
+ * Реализовано на DP (бит 7) второго и третьего разрядов. */
+void display_set_dot_blinking(bool enable);
+
 /* =====================
  *        СТАТУС
  * ===================== */

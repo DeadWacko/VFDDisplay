@@ -1,3 +1,5 @@
+#warning "display.h is deprecated. Use display_ll.h + display_api.h instead."
+
 #ifndef DISPLAY_H
 #define DISPLAY_H
 
