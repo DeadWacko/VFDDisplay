@@ -38,9 +38,12 @@ pico_sdk_init()
 # 1. Библиотека драйвера дисплея
 #
 add_library(vfd_display
-    src/display.c
+    src/display.c            # legacy, пока живёт
     src/display_ll.c
+    src/display_core.c
+    src/display_content.c
 )
+
 
 # Публичные заголовки
 target_include_directories(vfd_display
