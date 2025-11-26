@@ -461,3 +461,9 @@ void display_fx_tick(void)
         break;
     }
 }
+
+
+bool display_fx_is_running(void)
+{
+    return s_fx.active;
+}

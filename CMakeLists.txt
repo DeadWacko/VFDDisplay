@@ -44,6 +44,7 @@ add_library(vfd_display
     src/display_content.c
     src/display_font.c
     src/display_fx.c
+    src/display_overlay.c
 )
 
 

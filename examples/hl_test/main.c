@@ -132,6 +132,28 @@ int main(void)
     // =========================
     display_set_brightness(255);
     display_set_dot_blinking(true);
+
+
+    // =========================
+    // OVERLAY: boot / wifi / ntp
+    // =========================
+    display_show_time(12, 34, true);
+    run_for_ms(1000, 20);
+
+    display_overlay_boot(0);
+    run_for_ms(3000, 20);
+
+    display_show_time(12, 34, true);
+    display_overlay_wifi(0);
+    run_for_ms(3000, 20);
+
+    display_show_time(12, 34, true);
+    display_overlay_ntp(0);
+    run_for_ms(4000, 20);
+
+
+
+
     hours   = 12;
     minutes = 0;
 

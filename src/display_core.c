@@ -18,8 +18,14 @@
  * Пока без эффектов и оверлеев.
  */
 
-// ВРЕМЕННЫЕ дефолтные пины — под твой текущий стенд.
-// При желании можно потом вынести в конфиг / CMake.
+// ВРЕМЕННЫЕ дефолтные пины — под  текущий стенд.
+// TODO: потом вынести в конфиг / CMake.
+
+
+
+bool display_fx_is_running(void);   
+void display_overlay_tick(void);
+
 #define DISPLAY_DEFAULT_DATA_PIN     15
 #define DISPLAY_DEFAULT_CLOCK_PIN    14
 #define DISPLAY_DEFAULT_LATCH_PIN    13
@@ -105,15 +111,9 @@ display_mode_t display_get_mode(void)
 
 bool display_is_effect_running(void)
 {
-    // Пока эффектов нет
-    return false;
+    return display_fx_is_running();
 }
 
-bool display_is_overlay_running(void)
-{
-    // Пока оверлеев нет
-    return false;
-}
 
 /* ---------- ЯРКОСТЬ ---------- */
 
@@ -187,21 +187,22 @@ void display_process(void)
             s_core.dot_state       = !s_core.dot_state;
 
             if (s_core.dot_state) {
-                // включаем DP (бит 7) у 2 и 3 разрядов
+                // включаем DP (бит 7) у 2 разряда (можно добавить 3-й, если захочешь)
                 s_core.hl_buffer[1] |=  0x80;
-                
             } else {
                 // выключаем DP
                 s_core.hl_buffer[1] &= (vfd_seg_t)~0x80;
-                
             }
 
             hl_push_buffer_to_ll();
         }
-    
     }
 
-    
-     // --- НОВОЕ: обновление FX-слоя ---
-    display_fx_tick();
+    // --- приоритет: сначала overlay, потом FX ---
+    if (display_is_overlay_running()) {
+        display_overlay_tick();
+    } else {
+        display_fx_tick();
+    }
 }
+
