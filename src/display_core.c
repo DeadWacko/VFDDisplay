@@ -198,7 +198,10 @@ void display_process(void)
 
             hl_push_buffer_to_ll();
         }
+    
     }
 
-    // Здесь позже появятся эффекты/оверлеи/автояркость и т.п.
+    
+     // --- НОВОЕ: обновление FX-слоя ---
+    display_fx_tick();
 }

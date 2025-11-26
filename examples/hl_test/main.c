@@ -2,19 +2,34 @@
 #include "pico/stdlib.h"
 #include "display_api.h"
 
-// Простой тест нового HL-API:
-// - инициализация дисплея
-// - показ числа
-// - показ времени
-// - показ даты
-// - показ текста (цифрового)
-// Всё через display_api.h, без прямого доступа к LL.
+/*
+ * HL / FX TEST
+ * ------------
+ * Что проверяем:
+ * 1) Базовый HL-API:
+ *    - display_init
+ *    - display_show_number / _time / _date / _text
+ *    - display_set_brightness
+ *    - display_set_dot_blinking
+ *
+ * 2) Интеграцию FX:
+ *    - display_fx_fade_in
+ *    - display_fx_fade_out
+ *    - display_fx_pulse
+ *    - display_fx_wave
+ *
+ * Везде display_process() крутится из главного цикла / вспомогательной функции.
+ */
 
-static void delay_ms_blocking(uint32_t ms)
+static void run_for_ms(uint32_t total_ms, uint32_t step_ms)
 {
-    // На будущее здесь можно будет дергать display_process() чаще,
-    // пока эффекты/оверлеи не реализованы — просто sleep.
-    sleep_ms(ms);
+    if (step_ms == 0) step_ms = 10;
+
+    uint32_t ticks = total_ms / step_ms;
+    for (uint32_t i = 0; i < ticks; i++) {
+        display_process();
+        sleep_ms(step_ms);
+    }
 }
 
 int main(void)
@@ -22,52 +37,93 @@ int main(void)
     stdio_init_all();
     sleep_ms(500);
 
-    
+    // 4 разряда для тестов — под твой текущий VFD
     display_init(4);
 
-    
     display_set_brightness(255);
+    display_set_dot_blinking(false);
 
-    printf("HL test: init done, starting demo...\n");
+    printf("HL/FX test: init done, starting demo...\n");
 
-    // --- Фаза 1: показываем числа 0..9 ---
+    // =========================
+    // ФАЗА 1: HL — числа 0..9
+    // =========================
     for (int32_t v = 0; v <= 9; v++) {
         display_show_number(v);
-        for (int i = 0; i < 10; i++) {
-            display_process();
-            delay_ms_blocking(30);
-        }
+        run_for_ms(300, 30);   // показываем каждую цифру ~0.3s
     }
 
-    // --- Фаза 2: простое время 12:34 с двоеточием ---
-    display_show_time(12, 34, true);
-    for (int i = 0; i < 100; i++) {
-        display_process();
-        delay_ms_blocking(10);
-    }
+    // =========================
+    // ФАЗА 2: HL — время и мигание точки
+    // =========================
+    // 2.1: статичное время 12:34 без мигания
+    display_set_dot_blinking(false);
+    display_show_time(12, 34, true);   // двоеточие включено, но не мигает
+    run_for_ms(1500, 20);
 
-    // --- Фаза 3: дата 31.12 ---
-    display_show_date(31, 12);
-    for (int i = 0; i < 100; i++) {
-        display_process();
-        delay_ms_blocking(10);
-    }
-
-    // --- Фаза 4: текст "1234" ---
-    display_show_text("1234");
-    for (int i = 0; i < 100; i++) {
-        display_process();
-        delay_ms_blocking(10);
-    }
-
-    // --- Фаза 5: бесконечный счётчик времени ---
-    uint8_t hours = 12;
-    uint8_t minutes = 0;
-    uint32_t tick = 0;
+    // 2.2: то же время, но с мигающей точкой (через display_set_dot_blinking)
     display_set_dot_blinking(true);
+    run_for_ms(4000, 20);              // несколько секунд наблюдаем мигание
+
+    // Отключим мигание точки дальше, чтобы эффекты были «чистыми»
+    display_set_dot_blinking(false);
+
+    // =========================
+    // ФАЗА 3: HL — дата 31.12
+    // =========================
+    display_show_date(31, 12);
+    run_for_ms(2000, 20);
+
+    // =========================
+    // ФАЗА 4: HL — текст "1234"
+    // =========================
+    display_show_text("1234");
+    run_for_ms(2000, 20);
+
+    // =========================
+    // ФАЗА 5: FX — яркостные эффекты на фоне времени
+    // =========================
+    uint8_t hours   = 12;
+    uint8_t minutes = 0;
+
+    // Базовое время: 12:00, без мигания, просто чтобы был понятный контент
+    display_show_time(hours, minutes, true);
+    display_set_brightness(255);
+
+    // 5.1: FADE OUT — плавное выключение за 1.5с
+    display_fx_fade_out(1500);
+    run_for_ms(2000, 20);  // чуть дольше длительности, чтобы эффект гарантированно завершился
+
+    // 5.2: FADE IN — плавное включение за 1.5с
+    display_set_brightness(0);  // на всякий случай стартуем из 0
+    display_show_time(hours, minutes, true);
+    display_fx_fade_in(1500);
+    run_for_ms(2000, 20);
+
+    // 5.3: PULSE — «дыхание» на 3 секунды
+    display_set_brightness(255);
+    display_show_time(hours, minutes, true);
+    display_fx_pulse(3000);
+    run_for_ms(3500, 20);
+
+    // 5.4: WAVE — синусоидальная яркость на 3 секунды
+    display_set_brightness(255);
+    display_show_time(hours, minutes, true);
+    display_fx_wave(3000);
+    run_for_ms(3500, 20);
+
+    // =========================
+    // ФАЗА 6: простой «софт RTC» + FX в фоне
+    // =========================
+    display_set_brightness(255);
+    display_set_dot_blinking(true);
+    hours   = 12;
+    minutes = 0;
+
+    uint32_t tick = 0;
 
     while (true) {
-        // Каждую секунду увеличиваем минуты (условный софт-RTC)
+        // Раз в условную «секунду» (100 тиков * 10 ms = 1 s) — обновляем минуты
         if ((tick % 100) == 0) {
             minutes++;
             if (minutes >= 60) {
@@ -75,10 +131,16 @@ int main(void)
                 hours = (uint8_t)((hours + 1) % 24);
             }
             display_show_time(hours, minutes, true);
+
+            // Каждые 5 минут запускаем небольшой pulse на яркости
+            if ((minutes % 5) == 0) {
+                // Если эффект не активен — запустится, если активен — fx_start вернёт false и просто проигнорируем
+                display_fx_pulse(2000);
+            }
         }
 
         display_process();
-        delay_ms_blocking(10);
+        sleep_ms(10);
         tick++;
     }
 }

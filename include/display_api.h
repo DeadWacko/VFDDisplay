@@ -69,6 +69,9 @@ bool display_fx_fade_out(uint32_t duration_ms);
 /* Глитч / flicker */
 bool display_fx_glitch(uint32_t duration_ms);
 
+/* Обновление текущего эффекта (вызов из display_process). */
+void display_fx_tick(void);
+
 /* "Matrix rain" */
 bool display_fx_matrix(uint32_t duration_ms, uint32_t frame_ms);
 
