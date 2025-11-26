@@ -3,8 +3,8 @@
 #include "display_api.h"
 
 /*
- * HL / FX TEST
- * ------------
+ * HL / FX TEST (новый)
+ * --------------------
  * Что проверяем:
  * 1) Базовый HL-API:
  *    - display_init
@@ -12,13 +12,15 @@
  *    - display_set_brightness
  *    - display_set_dot_blinking
  *
- * 2) Интеграцию FX:
+ * 2) FX-слой (перенесённый из легаси):
  *    - display_fx_fade_in
  *    - display_fx_fade_out
  *    - display_fx_pulse
  *    - display_fx_wave
+ *    - display_fx_glitch
+ *    - display_fx_matrix
  *
- * Везде display_process() крутится из главного цикла / вспомогательной функции.
+ * Везде display_process() вызывается из вспомогательной run_for_ms().
  */
 
 static void run_for_ms(uint32_t total_ms, uint32_t step_ms)
@@ -37,7 +39,7 @@ int main(void)
     stdio_init_all();
     sleep_ms(500);
 
-    // 4 разряда для тестов — под твой текущий VFD
+    // 4 разряда под твой текущий VFD
     display_init(4);
 
     display_set_brightness(255);
@@ -56,12 +58,13 @@ int main(void)
     // =========================
     // ФАЗА 2: HL — время и мигание точки
     // =========================
+
     // 2.1: статичное время 12:34 без мигания
     display_set_dot_blinking(false);
     display_show_time(12, 34, true);   // двоеточие включено, но не мигает
     run_for_ms(1500, 20);
 
-    // 2.2: то же время, но с мигающей точкой (через display_set_dot_blinking)
+    // 2.2: то же время, но с мигающей точкой
     display_set_dot_blinking(true);
     run_for_ms(4000, 20);              // несколько секунд наблюдаем мигание
 
@@ -90,12 +93,12 @@ int main(void)
     display_show_time(hours, minutes, true);
     display_set_brightness(255);
 
-    // 5.1: FADE OUT — плавное выключение за 1.5с
+    // 5.1: FADE OUT — плавное выключение за 1.5 с
     display_fx_fade_out(1500);
     run_for_ms(2000, 20);  // чуть дольше длительности, чтобы эффект гарантированно завершился
 
-    // 5.2: FADE IN — плавное включение за 1.5с
-    display_set_brightness(0);  // на всякий случай стартуем из 0
+    // 5.2: FADE IN — плавное включение за 1.5 с
+    display_set_brightness(0);  // стартуем из 0
     display_show_time(hours, minutes, true);
     display_fx_fade_in(1500);
     run_for_ms(2000, 20);
@@ -106,10 +109,22 @@ int main(void)
     display_fx_pulse(3000);
     run_for_ms(3500, 20);
 
-    // 5.4: WAVE — синусоидальная яркость на 3 секунды
+    // 5.4: WAVE — волна яркости по разрядам на 3 секунды
     display_set_brightness(255);
     display_show_time(hours, minutes, true);
     display_fx_wave(3000);
+    run_for_ms(3500, 20);
+
+    // 5.5: GLITCH — динамический фликер на 3 секунды
+    display_set_brightness(255);
+    display_show_time(hours, minutes, true);
+    display_fx_glitch(3000);
+    run_for_ms(3500, 20);
+
+    // 5.6: MATRIX — "дождь" по яркости разрядов на 3 секунды
+    display_set_brightness(255);
+    display_show_time(hours, minutes, true);
+    display_fx_matrix(3000, 50);   // ~20 FPS
     run_for_ms(3500, 20);
 
     // =========================
@@ -123,7 +138,7 @@ int main(void)
     uint32_t tick = 0;
 
     while (true) {
-        // Раз в условную «секунду» (100 тиков * 10 ms = 1 s) — обновляем минуты
+        // Раз в "секунду" (100 тиков * 10 ms = 1 s) — обновляем минуты
         if ((tick % 100) == 0) {
             minutes++;
             if (minutes >= 60) {
@@ -132,10 +147,14 @@ int main(void)
             }
             display_show_time(hours, minutes, true);
 
-            // Каждые 5 минут запускаем небольшой pulse на яркости
+            // Каждые 5 минут — небольшой pulse на яркости
             if ((minutes % 5) == 0) {
-                // Если эффект не активен — запустится, если активен — fx_start вернёт false и просто проигнорируем
-                display_fx_pulse(2000);
+                (void)display_fx_pulse(2000);
+            }
+
+            // Каждые 15 минут — короткий glitch
+            if ((minutes % 15) == 0) {
+                (void)display_fx_glitch(1500);
             }
         }
 
