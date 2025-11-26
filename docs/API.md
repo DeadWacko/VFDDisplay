@@ -1,152 +1,186 @@
-# VFD Display Driver — Public API
 
-## 1. Низкоуровневый API (`display_ll.h`)
+# VFD Display — Effects System (FX)
 
-Этот слой предоставляет прямой доступ к буферу сегментов и настройке яркости.
-Он не знает ни про «время», ни про «эффекты», ни про оверлеи — только железо.
+Этот документ описывает архитектуру эффектов (анимаций), которые будут перенесены из легаси (`display.c`) в новый модуль `display_fx.c`.  
+Документ дополнен и приведён в соответствие с новой LL/HL структурой.
 
-Примеры функций (актуальная модель):
 
-- `bool display_ll_init(const display_ll_config_t *cfg);`
-  - Инициализация LL-слоя (пины DATA/CLOCK/LATCH, число разрядов, частота refresh).
-- `bool display_ll_is_initialized(void);`
-- `bool display_ll_start_refresh(void);`
-- `void display_ll_stop_refresh(void);`
 
-Работа с буфером:
+## 1. Цели FX-слоя
 
-- `uint8_t display_ll_get_digit_count(void);`
-- `vfd_seg_t *display_ll_get_buffer(void);`
-- `void display_ll_set_digit_raw(uint8_t index, vfd_seg_t segmask);`
+Эффекты должны быть:
+- полностью изолированы от LL-слоя
+- управляемы через HL-режимы (`MODE_EFFECT`)
+- обновляться на каждом тике `display_process()`
+- иметь простой интерфейс запуска/остановки
+- работать независимо от CONTENT и OVERLAY
 
-Яркость и гамма:
-
-- `void display_ll_set_brightness(uint8_t index, uint8_t level);`
-- `void display_ll_set_brightness_all(uint8_t level);`
-- `uint8_t display_ll_apply_gamma(uint8_t linear);`
-- `void display_ll_enable_gamma(bool enable);`
-
-> LL-слой сейчас считается стабильным: он обеспечивает мультиплексирование разрядов,
-> программный PWM по яркости и базовую гамма-коррекцию. Вся более сложная логика
-> (эффекты, время, оверлеи) живёт выше, в HL-слое.
+**FX-слой не меняет железо напрямую** — он управляет только **HL-буфером** или **яркостью**.
 
 ---
 
-## 2. Высокоуровневый API (`display_api.h`)
+## 2. Общая архитектура FX
 
-Этот слой опирается на `display_ll.h` и предназначен для приложений:
-часы, индикаторы, проекты на Pico. Здесь появляются понятия «число», «время»,
-«дата», «эффекты» и «оверлеи».
+FX-слой работает как state machine:
 
-### 2.1. Базовый жизненный цикл
 
-- `void display_init(uint8_t digit_count);`
-  - Инициализирует LL внутри себя и поднимает HL-состояние.
-- `void display_process(void);`
-  - Периодический тик HL-логики (мигание точки, позже — эффекты/оверлеи).
-  - Ожидается вызов из главного цикла приложения.
+APP → display_fx_xxx() → FX_STATE_ACTIVE
+display_process() → обновляет эффект
+по завершении → FX_STATE_IDLE → CONTENT восстановлен
 
-### 2.2. Отрисовка контента
 
-Уровень «что показать на экране», без эффектов.
-
-**Уже реализовано:**
-
-- `[x]` `void display_show_number(int32_t value);`
-  - Показать целое число, выровненное по правому краю.
-- `[x]` `void display_show_text(const char *text);`
-  - Показать строку (до 10 символов, в рамках ширины индикатора).
-- `[x]` `void display_show_time(uint8_t hours, uint8_t minutes, bool show_colon);`
-  - Показать время в формате `HHMM` или `HH:MM` (через DP-сегменты).
-- `[x]` `void display_show_date(uint8_t day, uint8_t month);`
-  - Показать дату в формате `DDMM` или `DD.MM`.
-- `[x]` `vfd_seg_t *display_content_buffer(void);`
-  - Доступ к текущему CONTENT-буферу для отладки/просмотра.
-
-**Планируется (пока не реализовано):**
-
-- `[ ]` Скроллинг текста.
-- `[ ]` Числовые анимации (морфинг, перелистывание).
-
-### 2.3. Яркость и режимы
-
-**Уже реализовано:**
-
-- `[x]` `void display_set_brightness(uint8_t value);`
-  - Глобальная яркость индикатора (0–255), прокидывается в LL.
-
-**Заглушки / в разработке:**
-
-- `[ ]` `void display_set_night_mode(bool enable);`
-  - Ночной режим (смягчённая яркость, приглушённые эффекты).
-- `[ ]` `void display_set_auto_brightness(bool enable);`
-  - Автоматическая яркость (фоторезистор/датчик).
-
-### 2.4. Точка / двоеточие
-
-**Уже реализовано:**
-
-- `[x]` `void display_set_dot_blinking(bool enable);`
-  - Управление миганием точки/двоеточия в режиме времени `HH:MM`.
-  - На текущем железе реализовано через DP (бит 7) второго и третьего разрядов.
-  - Логика мигания живёт в `display_process()` (примерно 1 Гц).
-
-### 2.5. Режимы и статус
-
-- `[x]` `display_mode_t display_get_mode(void);`
-  - Текущий режим:
-    - `DISPLAY_MODE_CONTENT`
-    - `DISPLAY_MODE_EFFECT`
-    - `DISPLAY_MODE_OVERLAY`
-- `[ ]` `bool display_is_effect_running(void);`
-- `[ ]` `bool display_is_overlay_running(void);`
-
-Пока обе функции возвращают `false` (эффекты/оверлеи ещё не перенесены из легаси),
-но API уже зарезервирован.
-
-### 2.6. Эффекты (FX API)
-
-Эти функции описаны в спецификации и частично реализованы в легаси,
-но ещё не перенесены в новый HL-слой.
-
-Планируемый набор:
-
-- `[ ]` `bool display_fx_pulse(uint32_t duration_ms);`
-- `[ ]` `bool display_fx_brightness_wave(uint32_t duration_ms);`
-- `[ ]` `bool display_fx_fade_in(uint32_t duration_ms);`
-- `[ ]` `bool display_fx_fade_out(uint32_t duration_ms);`
-- `[ ]` `bool display_fx_dynamic_flicker(uint32_t duration_ms);`
-- `[ ]` `bool display_fx_matrix(uint32_t duration_ms, uint32_t frame_ms);`
-- `[ ]` `void display_fx_stop(void);`
-
-Фактическая реализация будет жить в отдельном модуле (`display_fx.c`)
-и использовать общий heartbeat (`display_process()`).
-
-### 2.7. Оверлеи (Overlay API)
-
-Специальные состояния, поверх обычного контента (Wi-Fi, NTP, boot и т.д.).
-
-Планируемые функции:
-
-- `[ ]` `bool display_overlay_boot(uint32_t duration_ms);`
-- `[ ]` `bool display_overlay_wifi(uint32_t duration_ms);`
-- `[ ]` `bool display_overlay_ntp(uint32_t duration_ms);`
-- `[ ]` `void display_overlay_stop(void);`
-
-Оверлеи будут отвечать за временную замену отображения
-(подключение к Wi-Fi, синхронизация времени и т.п.), после чего
-возвращать экран в нормальный режим CONTENT.
-
-Полная спецификация эффектов и оверлеев описана в `FX.md` / `SPEC.md`
-и будет заполняться по мере переноса логики из легаси (`display.c`)
-в новые модули.
+**Когда запускается эффект:**
+1. CONTENT-буфер сохраняется
+2. Активируется `MODE_EFFECT`
+3. FX получает контроль над выводом (буфер или яркость)
+4. На каждом тике `display_process()` эффект обновляет:
+   - яркость
+   - сегменты
+   - временные маски
+5. Когда эффект заканчивается — управление возвращается CONTENT
 
 ---
 
-## 3. Legacy API (`display.h`)
+## 3. Структура FX-слоя
 
-Старый заголовок `display.h` используется текущими примерами и будет
-постепенно переведён на новый API. На переходный период он может выступать
-в роли thin-wrapper над `display_ll` / `display_api`.
+Будущий файл `display_fx.c` будет содержать:
 
-В новых проектах рекомендуется использовать `display_ll.h` / `display_api.h`.
+### 3.1. Глобальное состояние
+
+```c
+typedef struct {
+    bool active;
+    display_effect_t current;
+    uint32_t start_ms;
+    uint32_t duration_ms;
+    
+    // Параметры эффекта
+    uint8_t wave_phase;
+    uint8_t flicker_seed;
+    uint8_t fade_level;
+    
+    // Сохранённый CONTENT-буфер
+    vfd_seg_t saved_buffer[VFD_MAX_DIGITS];
+} display_fx_state_t;
+```
+
+### 3.2. Перечень эффектов
+
+```c
+typedef enum {
+    FX_NONE = 0,
+    FX_FADE_IN,
+    FX_FADE_OUT,
+    FX_WAVE,
+    FX_PULSE,
+    FX_FLICKER,
+    FX_DISSOLVE,
+    FX_MORPH
+} display_effect_t;
+```
+
+---
+
+## 4. Переносимые эффекты (описания)
+
+Ниже — эффекты, которые были в легаси (или нужны по спецификации), и которые будут реализованы поверх HL-буфера.
+
+### 4.1. FADE IN / FADE OUT
+- **Тип:** яркостная анимация
+- **Управляет:** `display_ll_set_brightness_all()` или per-digit
+- **Принцип работы:** яркость меняется от `0 → 255` (fade-in) или `255 → 0` (fade-out)
+- **Плавность** обеспечивается LL-гаммой
+- CONTENT-буфер не трогается
+
+### 4.2. PULSE (дыхание)
+- **Тип:** синусоидальная яркость
+- **Управляет:** LL-яркостью
+- **Реализация:**
+  ```c
+  brightness = sin(phase) * 255;
+  phase += speed;
+  ```
+- HL-буфер остаётся неизменным
+
+### 4.3. WAVE (волна яркости по разрядам)
+- **Тип:** динамическая яркость разрядов
+- **Управляет:** `display_ll_set_brightness(index)`
+- **Пример:**
+  ```c
+  digit[i].brightness = sin(phase + i * shift);
+  ```
+- Старый легаси-эффект делал ровно это
+
+### 4.4. FLICKER / GLITCH (хаотичное мерцание)
+- **Тип:** псевдорандомные отключения сегментов
+- **Управляет:** HL-буфером
+- **Принцип работы:**
+  - берётся сохранённый CONTENT-буфер
+  - случайно выключаются сегменты на нескольких тиках
+  - затем постепенно восстанавливаются
+
+### 4.5. DISSOLVE (рассыпание сегментов)
+- **Тип:** сегментная анимация
+- **Управляет:** HL-буфером
+- **Алгоритм:**
+  - каждый сегмент получает случайную задержку выключения
+  - по таймеру сегменты «осыпаются» (turn off)
+  - затем эффект завершается
+
+### 4.6. MORPH TO (цифра → цифра)
+- **Тип:** переход
+- **Управляет:** HL-буфером
+- **Использует:**
+  - несколько промежуточных масок сегментов
+  - шаги морфинга формируются заранее
+
+---
+
+## 5. Интерфейсы FX (будущие функции)
+
+**Запуск эффектов:**
+
+```c
+bool display_fx_fade_in(uint32_t duration_ms);
+bool display_fx_fade_out(uint32_t duration_ms);
+bool display_fx_pulse(uint32_t duration_ms);
+bool display_fx_brightness_wave(uint32_t duration_ms);
+bool display_fx_dynamic_flicker(uint32_t duration_ms);
+bool display_fx_dissolve(uint32_t duration_ms);
+bool display_fx_morph_to(const vfd_seg_t *target, uint32_t duration_ms);
+```
+
+**Остановка и статус:**
+
+```c
+void display_fx_stop(void);
+bool display_is_effect_running(void);
+```
+
+Все эффекты управляются через общий heartbeat `display_process()`.
+
+---
+
+## 6. Статус миграции
+
+| Эффект         | Статус              |
+|----------------|---------------------|
+| Fade In        | ☐ не перенесён      |
+| Fade Out       | ☐ не перенесён      |
+| Pulse          | ☐ не перенесён      |
+| Wave           | ☐ не перенесён      |
+| Flicker        | ☐ не перенесён      |
+| Dissolve       | ☐ не перенесён      |
+| Morph          | ☐ не перенесён      |
+
+---
+
+## 7. Принципы разработки FX
+
+- Эффект **никогда** не лезет в LL напрямую
+- CONTENT-буфер **всегда** сохраняется и восстанавливается
+- Эффект **обязан** заканчиваться сам
+- Эффект **не должен** заново инициализировать LL
+- Один эффект за раз: режим `MODE_EFFECT`
+
+Документ будет дополняться по мере переноса логики из легаси в новый FX-модуль.
