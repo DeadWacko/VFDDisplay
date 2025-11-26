@@ -115,4 +115,14 @@ display_mode_t display_get_mode(void);
 bool display_is_effect_running(void);
 bool display_is_overlay_running(void);
 
+/* =====================
+ *     MAIN PROCESS LOOP
+ * ===================== */
+
+/**
+ * Главный тик обработки анимаций/оверлеев/логики HL.
+ * Вызывать регулярно из основного цикла приложения.
+ */
+void display_process(void);
+
 #endif // DISPLAY_API_H

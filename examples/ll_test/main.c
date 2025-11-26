@@ -2,17 +2,9 @@
 #include "pico/stdlib.h"
 #include "display_ll.h"
 
-// ВАЖНО:
-// Здесь НЕТ связи с библиотечными CHAR_MAP — это ЛОКАЛЬНАЯ таблица только для теста LL,
-// чтобы не нарушать правило "нет CHAR_MAP в библиотеке".
-//
-// ПОДСТАВЬ сюда свои реальные значения, КАК В clock_stress_test:
-//
-//   cfg.data_pin         → VFD_DATA_PIN
-//   cfg.clock_pin        → VFD_CLOCK_PIN
-//   cfg.latch_pin        → VFD_LATCH_PIN
-//   cfg.digit_count      → VFD_DIGIT_COUNT
-//   cfg.fast_refresh_rate→ VFD_REFRESH_HZ
+#include "display_font.h"
+
+
 //
 #define VFD_DATA_PIN      15
 #define VFD_CLOCK_PIN     14
@@ -20,28 +12,15 @@
 #define VFD_DIGIT_COUNT   4
 #define VFD_REFRESH_HZ    120
 
-// ЛОКАЛЬНАЯ 7-сегментная таблица цифр 0–9 (bit0=a, bit1=b, ..., bit6=g, bit7=dp)
-// Это классическая common-cathode раскладка.
-// На твоём VFD порядок сегментов может отличаться — тогда цифры будут чуть "кривые",
-// но ЗАТО поведение LL (обновление, PWM, гамма) будет видно как есть.
-static const uint8_t NUM_MAP[10] = {
-    0b01111011, 0b00000011, 0b01011110, 0b01001111, 0b00100111,
-    0b01101101, 0b01111101, 0b01000011, 0b01111111, 0b01101111
-   
-};
 
-static inline uint8_t clamp_digit(uint8_t d)
-{
-    return (d < 10) ? d : 0;
-}
 
-// Показать одну цифру на конкретной позиции (pos = 0..digit_count-1)
+
 static void ll_show_digit(uint8_t pos, uint8_t digit)
 {
-    uint8_t d = clamp_digit(digit);
-    vfd_seg_t segmask = NUM_MAP[d];
+    vfd_seg_t segmask = display_font_digit(digit);
     display_ll_set_digit_raw(pos, segmask);
 }
+
 
 // Показать целое число value справа, с заданным количеством разрядов.
 // Левые разряды заполняются нулями.

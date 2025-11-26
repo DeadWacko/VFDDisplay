@@ -15,8 +15,15 @@
  * - обновление HL-буфера сегментов
  * - вызов LL для вывода сегментов
  *
- * Здесь НЕТ эффектов и оверлеев — только базовая логика.
+ * Пока без эффектов и оверлеев.
  */
+
+// ВРЕМЕННЫЕ дефолтные пины — под твой текущий стенд.
+// При желании можно потом вынести в конфиг / CMake.
+#define DISPLAY_DEFAULT_DATA_PIN     15
+#define DISPLAY_DEFAULT_CLOCK_PIN    14
+#define DISPLAY_DEFAULT_LATCH_PIN    13
+#define DISPLAY_DEFAULT_REFRESH_HZ   120
 
 typedef struct
 {
@@ -109,11 +116,12 @@ void display_set_brightness(uint8_t brightness)
         display_ll_set_brightness(i, brightness);
 }
 
-void display_set_brightness_auto(bool enabled)
+void display_set_auto_brightness(bool enable)
 {
     // Пока режим не реализован
-    (void)enabled;
+    (void)enable;
 }
+
 
 void display_set_brightness_night(bool enabled)
 {

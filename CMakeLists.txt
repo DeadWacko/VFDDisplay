@@ -38,10 +38,11 @@ pico_sdk_init()
 # 1. Библиотека драйвера дисплея
 #
 add_library(vfd_display
-    src/display.c            # legacy, пока живёт
+    # src/display.c
     src/display_ll.c
     src/display_core.c
     src/display_content.c
+    src/display_font.c
 )
 
 
@@ -72,8 +73,9 @@ target_link_libraries(vfd_display
 #
 # 2. Примеры
 #
-add_subdirectory(examples/clock_stress_test)
+# add_subdirectory(examples/clock_stress_test)
 add_subdirectory(examples/ll_test)
+add_subdirectory(examples/hl_test)
 # На будущее:
 # add_subdirectory(examples/clock_basic)
 # add_subdirectory(examples/fx_showcase)
