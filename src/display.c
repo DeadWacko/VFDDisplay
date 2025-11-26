@@ -1,4 +1,5 @@
-#include "display.h"
+#include "display_ll.h"
+#include "display.h"     // пока старый API остаётся
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>

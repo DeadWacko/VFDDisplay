@@ -39,6 +39,7 @@ pico_sdk_init()
 #
 add_library(vfd_display
     src/display.c
+    src/display_ll.c
 )
 
 # Публичные заголовки
