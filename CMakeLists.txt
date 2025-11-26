@@ -70,7 +70,7 @@ target_link_libraries(vfd_display
 # 2. Примеры
 #
 add_subdirectory(examples/clock_stress_test)
-
+add_subdirectory(examples/ll_test)
 # На будущее:
 # add_subdirectory(examples/clock_basic)
 # add_subdirectory(examples/fx_showcase)
