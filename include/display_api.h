@@ -75,6 +75,11 @@ void display_fx_tick(void);
 /* "Matrix rain" */
 bool display_fx_matrix(uint32_t duration_ms, uint32_t frame_ms);
 
+
+
+bool display_fx_morph(uint32_t duration_ms, const vfd_seg_t *target, uint32_t steps);
+bool display_fx_dissolve(uint32_t duration_ms);
+
 /* Остановить любой эффект */
 void display_fx_stop(void);
 
