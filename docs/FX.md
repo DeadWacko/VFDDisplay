@@ -1,141 +1,120 @@
+
 # VFD Display — Effects System (FX)
 
-Этот документ описывает архитектуру эффектов (анимаций), которые будут перенесены из легаси (`display.c`) в новый модуль `display_fx.c`.  
-Документ дополнен и приведён в соответствие с новой LL/HL структурой.
+Документ описывает архитектуру и реализацию FX-движка (`display_fx.c`), который
+полностью перенесён из легаси и расширен новыми эффектами.
 
 ## 1. Цели FX-слоя
 
-Эффекты должны быть:
-- полностью изолированы от LL-слоя
-- управляемы через HL-режимы (`MODE_EFFECT`)
-- обновляться на каждом тике `display_process()`
-- иметь простой интерфейс запуска/остановки
-- работать независимо от CONTENT и OVERLAY
+FX-движок должен обеспечивать:
+- плавные анимации яркости и сегментов
+- полную изоляцию от LL-слоя
+- работу по FSM через `display_process()`
+- удобный API для запуска эффектов
+- корректный возврат к CONTENT после завершения
 
-**FX-слой не меняет железо напрямую** — он управляет только **HL-буфером** или **яркостью**.
-
----
+FX не касается GPIO/PWM напрямую — только сегментов и яркости.
 
 ## 2. Общая архитектура FX
 
-FX-слой работает как state machine:
+FX работает как state machine.
 
+APP → display_fx_xxx()
+    └→ HL ставит режим MODE_EFFECT
+       └→ FX получает управление
+          └→ display_fx_tick() вызывается на каждом heartbeat
+             └→ по завершении FX → MODE_CONTENT → восстановление состояния
 
-APP → display_fx_xxx() → FX_STATE_ACTIVE
-display_process() → обновляет эффект
-по завершении → FX_STATE_IDLE → CONTENT восстановлен
-
-
-**Когда запускается эффект:**
-1. CONTENT-буфер CONTENT сохраняется
-2. Активируется `MODE_EFFECT`
-3. FX получает контроль над выводом (буфер или яркость)
-4. На каждом тике `display_process()` эффект обновляет:
-   - яркость
-   - сегменты
-   - временные маски
-5. Когда эффект заканчивается — управление возвращается CONTENT
-
----
+Эффект может управлять:
+- яркостью LL (глобальной или per-digit)
+- сегментами HL (`display_ll_get_buffer()`)
 
 ## 3. Структура FX-слоя
 
-Будущий файл `display_fx.c` будет содержать:
+### 3.1. Состояние FX
 
-### 3.1. Глобальное состояние
+Главная структура:
 
 ```c
 typedef struct {
-    bool active;
-    display_effect_t current;
-    uint32_t start_ms;
-    uint32_t duration_ms;
-    
-    // Параметры эффекта
-    uint8_t wave_phase;
-    uint8_t flicker_seed;
-    uint8_t fade_level;
-    
-    // Сохранённый CONTENT-буфер
-    vfd_seg_t saved_buffer[VFD_MAX_DIGITS];
-} display_fx_state_t;
+    bool      active;
+    fx_type_t type;
+
+    absolute_time_t start_time;
+    uint32_t  duration_ms;
+    uint32_t  frame_ms;
+
+    uint8_t   base_brightness;
+
+    // GLITCH
+    bool      glitch_active;
+    uint32_t  glitch_last_ms;
+    uint32_t  glitch_next_ms;
+    uint32_t  glitch_step;
+    uint8_t   glitch_digit;
+    uint8_t   glitch_bit;
+    vfd_seg_t glitch_saved_digit;
+
+    // MATRIX RAIN
+    uint32_t  matrix_last_ms;
+    uint32_t  matrix_step;
+    uint32_t  matrix_total_steps;
+    uint8_t   matrix_min_percent;
+    uint8_t   matrix_brightness_percent[VFD_MAX_DIGITS];
+
+    // MORPH
+    vfd_seg_t morph_start[VFD_MAX_DIGITS];
+    vfd_seg_t morph_target[VFD_MAX_DIGITS];
+    uint32_t  morph_step;
+    uint32_t  morph_steps;
+
+    // DISSOLVE
+    uint8_t   dissolve_order[VFD_MAX_DIGITS * 8];
+    uint32_t  dissolve_total_bits;
+    uint32_t  dissolve_step;
+} fx_state_t;
 ```
 
-### 3.2. Перечень эффектов
+Все эффекты работают внутри этой state-machine.
 
-```c
-typedef enum {
-    FX_NONE = 0,
-    FX_FADE_IN,
-    FX_FADE_OUT,
-    FX_WAVE,
-    FX_PULSE,
-    FX_GLITCH,
-    FX_MATRIX,
-    FX_DISSOLVE,
-    FX_MORPH
-} display_effect_t;
-```
+## 4. Перечень реализованных эффектов
 
----
+**4.1. FADE IN / FADE OUT**  
+Яркость меняется по гамма-кривой:  
+`brightness = gamma(normalized_time)`  
+HL-буфер не трогается.
 
-## 4. Переносимые эффекты (описания)
+**4.2. PULSE (дыхание)**  
+- синусоидальная яркость: `-cos(phase) → [0..1]`  
+- гамма-коррекция  
+- минимальная яркость 8%  
+- плавное «дыхание»
 
-Ниже — эффекты, которые были в легаси (или нужны по спецификации), и которые будут реализованы поверх HL-буфера.
+**4.3. WAVE (волна яркости)**  
+- синус с фазовым сдвигом `phase - digit_index * shift`  
+- пер-дигитная яркость  
+- применяется в HL через `display_ll_set_brightness(i)`
 
-### 4.1. FADE IN / FADE OUT
-- Тип: яркостная анимация
-- Управляет: `display_ll_set_brightness_all()` или per-digit
-- Принцип работы: яркость меняется от `0 → 255` (fade-in) или `255 → 0` (fade-out)
-- Плавность обеспечивается LL-гаммой
-- CONTENT-буфер не трогается
+**4.4. GLITCH (хаотический фликер)**  
+Работает по паттерну 1-0-1-0-1-1-0 для одного случайного сегмента.  
+Жёстко изолирован: после окончания бита восстанавливается исходная маска.
 
-### 4.2. PULSE (дыхание)
-- Тип: синусоидальная яркость
-- Управляет: LL-яркостью
-- Реализация:
-  ```c
-  brightness = sin(phase) * 255;
-  phase += speed;
-  ```
-- HL-буфер остаётся неизменным
+**4.5. MATRIX RAIN**  
+- каждые `frame_ms` один случайный разряд поднимается до 100%  
+- остальные «гаснут» до min-percent  
+- эффект цифрового дождя
 
-### 4.3. WAVE (волна яркости по разрядам)
-- Тип: динамическая яркость разрядов
-- Управляет: `display_ll_set_brightness(index)`
-- Пример:
-  ```c
-  digit[i].brightness = sin(phase + i * shift);
-  ```
+**4.6. MORPH (цифра → цифра)**  
+- плавный переход сегментных масок  
+- каждый сегмент включается/выключается по порядку  
+- количество шагов задаётся пользователем
 
-### 4.4. FLICKER / GLITCH (хаотичное мерцание)
-- Тип: псевдорандомные отключения сегментов
-- Управляет: HL-буфером
-- Принцип работы:
-  - берётся сохранённый CONTENT-буфер
-  - случайно выключаются сегменты на нескольких тиках
-  - затем постепенно восстанавливаются
+**4.7. DISSOLVE (рассыпание сегментов)**  
+- каждому сегменту назначается случайная задержка  
+- порядок через перемешивание массива 0..digits*8  
+- выключает сегменты в случайном порядке до полной пустоты
 
-### 4.5. MATRIX RAIN (случайные "капли" яркости)
-- Тип: яркостная анимация
-- Управляет: индивидуальной яркостью разрядов
-- Имитирует «цифровой дождь» из Матрицы
-
-### 4.6. DISSOLVE (рассыпание сегментов)
-- Тип: сегментная анимация
-- Управляет: HL-буфером
-- Алгоритм:
-  - каждый сегмент получает случайную задержку выключения
-  - по таймеру сегменты «осыпаются» (turn off)
-
-### 4.7. MORPH TO (цифра → цифра)
-- Тип: переход
-- Управляет: HL-буфером
-- Использует несколько промежуточных масок сегментов
-
----
-
-## 5. Интерфейсы FX (текущие функции)
+## 5. Интерфейсы FX
 
 ```c
 bool display_fx_fade_in(uint32_t duration_ms);
@@ -143,48 +122,37 @@ bool display_fx_fade_out(uint32_t duration_ms);
 bool display_fx_pulse(uint32_t duration_ms);
 bool display_fx_wave(uint32_t duration_ms);
 bool display_fx_glitch(uint32_t duration_ms);
-bool display_fx_matrix_rain(uint32_t duration_ms);
+bool display_fx_matrix(uint32_t duration_ms, uint32_t frame_ms);
+bool display_fx_morph(uint32_t duration_ms, const vfd_seg_t *target, uint32_t steps);
+bool display_fx_dissolve(uint32_t duration_ms);
+
+void display_fx_tick(void);
 void display_fx_stop(void);
-bool display_is_effect_running(void);
+bool display_fx_is_running(void);
 ```
 
-Все эффекты управляются через общий heartbeat `display_process()` → `display_fx_tick()`.
+Все эффекты работают через heartbeat.
 
----
+## 6. Статус миграции (ноябрь 2025)
 
-## 6. Статус миграции
+| Эффект        | Статус                       |
+|---------------|------------------------------|
+| Fade In       | перенесён                    |
+| Fade Out      | перенесён                    |
+| Pulse         | перенесён + улучшена плавность |
+| Wave          | перенесён                    |
+| Glitch        | перенесён                    |
+| Matrix Rain   | реализован                   |
+| Morph         | полностью реализован         |
+| Dissolve      | полностью реализован         |
 
-Реальное состояние на текущий момент (см. `display_fx.c`):
-
-
-
-| Эффект            | Статус                                          |
-|--------------------|--------------------------------------------------|
-| Fade In            | перенесён (`FX_TYPE_FADE_IN`)                 |
-| Fade Out           | перенесён (`FX_TYPE_FADE_OUT`)                |
-| Pulse              | перенесён (`FX_TYPE_PULSE`)                   |
-| Wave               | перенесён (`FX_TYPE_WAVE`)                    |
-| Flicker/Glitch     | перенесён (`FX_TYPE_GLITCH`)                  |
-| Matrix Rain        | реализован (`FX_TYPE_MATRIX`)                 |
-| Dissolve           | не перенесён (будущий сегментный эффект)     |
-| Morph              | не перенесён (плавный переход цифра→цифра)    |
-
-FX-слой уже работает как state machine поверх LL-яркости:
-- один эффект за раз;
-- все тайминги считаются от `start_time` через `display_fx_tick()`;
-- при завершении эффект восстанавливает базовую яркость или исходные сегменты.
-
----
+FX-движок полностью завершён и интегрирован в `display_process()`.
 
 ## 7. Принципы разработки FX
 
-- Эффект **никогда** не лезет в LL напрямую
-- CONTENT-буфер **всегда** сохраняется и восстанавливается
-- Эффект **обязан** заканчиваться сам
-- Эффект **не должен** заново инициализировать LL
-- Один эффект за раз: режим `MODE_EFFECT`
----
-Документ будет дополняться по мере переноса логики из легаси в новый FX-модуль.
-
-----
-Обновлено: 27.11.2025 — основные яркостные эффекты перенесены, добавлен Matrix Rain.
+- FX не трогает LL напрямую
+- HL-буфер всегда корректен
+- блокировок LL/HL нет
+- один активный эффект одновременно
+- эффекты обязаны завершаться
+- плавность обеспечивается гаммой LL
