@@ -91,4 +91,9 @@ uint8_t display_ll_apply_gamma(uint8_t linear);
 /** Включить/выключить встроенную гамма-коррекцию яркости. */
 void display_ll_enable_gamma(bool enable);
 
+bool     display_ll_is_initialized(void);
+void     display_ll_deinit(void);
+
+
+
 #endif // DISPLAY_LL_H
