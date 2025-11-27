@@ -135,21 +135,36 @@ int main(void)
 
 
     // =========================
-    // OVERLAY: boot / wifi / ntp
+    // ФАЗА 7: OVERLAY — boot / wifi / ntp
     // =========================
+    display_set_dot_blinking(false);   // чтобы точка не мешала анимациям
+
     display_show_time(12, 34, true);
     run_for_ms(1000, 20);
 
+    // boot-анимация: 0000 → 1111 → ... → 9999
     display_overlay_boot(0);
     run_for_ms(3000, 20);
 
+    // после boot вернётся старый контент, обновим его явно
     display_show_time(12, 34, true);
+    run_for_ms(500, 20);
+
+    // wifi-анимация: мигающие "8888"
     display_overlay_wifi(0);
     run_for_ms(3000, 20);
 
     display_show_time(12, 34, true);
+    run_for_ms(500, 20);
+
+    // ntp-анимация: бегущая "8" туда-сюда
     display_overlay_ntp(0);
     run_for_ms(4000, 20);
+
+    // вернулись к обычному виду и уходим в вечный цикл «часов»
+    display_show_time(12, 0, true);
+    display_set_dot_blinking(true);
+
 
 
 

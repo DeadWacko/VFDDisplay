@@ -5,6 +5,10 @@
 #include <string.h>
 #include <stdbool.h>
 
+#include "hardware/adc.h"
+#include "hardware/rtc.h"
+
+
 /*
  * NEW HIGH-LEVEL (HL) CORE
  * ------------------------
@@ -26,6 +30,10 @@
 bool display_fx_is_running(void);   
 void display_overlay_tick(void);
 
+static void update_final_brightness(void);
+static void brightness_tick(absolute_time_t now);
+
+
 #define DISPLAY_DEFAULT_DATA_PIN     15
 #define DISPLAY_DEFAULT_CLOCK_PIN    14
 #define DISPLAY_DEFAULT_LATCH_PIN    13
@@ -42,6 +50,21 @@ typedef struct
 
     // Глобальная яркость (0..255)
     uint8_t global_brightness;
+
+     // Базовая яркость, заданная пользователем
+    uint8_t user_brightness;    
+
+     // Режимы управления яркостью
+    bool auto_brightness_enabled;                 
+    bool night_mode_enabled;                      
+    uint8_t night_start_hour;                     
+    uint8_t night_end_hour;                       
+    uint8_t light_sensor_adc; 
+
+    // Тайминг обновления яркости (для авто/ночного режима)
+    absolute_time_t brightness_last_update;
+    uint32_t        brightness_period_ms;                     
+
 
     // Для будущих таймеров эффектов/оверлеев
     absolute_time_t last_update;
@@ -89,7 +112,25 @@ void display_init(uint8_t digit_count)
 
     memset(&s_core, 0, sizeof(s_core));
     s_core.digit_count       = digit_count;
-    s_core.global_brightness = VFD_MAX_BRIGHTNESS;
+
+
+    s_core.user_brightness         = VFD_MAX_BRIGHTNESS;
+    s_core.global_brightness       = VFD_MAX_BRIGHTNESS;
+
+     // Режимы яркости по умолчанию — ручной
+    s_core.auto_brightness_enabled = false;
+    s_core.night_mode_enabled      = false;
+    
+    // Ночной интервал (как в легаси: 23:00–07:00)
+    s_core.night_start_hour        = 23;
+    s_core.night_end_hour          = 7;
+
+    // Датчик освещённости — ADC0 (GPIO26)
+    s_core.light_sensor_adc        = 26;
+
+    // Обновление яркости раз в секунду
+    s_core.brightness_period_ms    = 1000;
+    s_core.brightness_last_update  = get_absolute_time();
 
     for (uint8_t i = 0; i < digit_count; i++)
         s_core.hl_buffer[i] = 0;
@@ -102,6 +143,14 @@ void display_init(uint8_t digit_count)
     s_core.dot_state         = false;
     s_core.dot_period_ms     = 1000;              // 1 Гц
     s_core.dot_last_toggle   = get_absolute_time();
+
+    // --- ADC под датчик освещённости ---
+    adc_init();
+    adc_gpio_init(s_core.light_sensor_adc);
+    adc_select_input(s_core.light_sensor_adc - 26);
+
+    // Применяем стартовую яркость
+    update_final_brightness();
 }
 
 display_mode_t display_get_mode(void)
@@ -119,26 +168,107 @@ bool display_is_effect_running(void)
 
 void display_set_brightness(uint8_t brightness)
 {
-    if (brightness > 255)
-        brightness = 255;
+    if (brightness > VFD_MAX_BRIGHTNESS)
+        brightness = VFD_MAX_BRIGHTNESS;
 
-    s_core.global_brightness = brightness;
-
-    for (uint8_t i = 0; i < s_core.digit_count; i++)
-        display_ll_set_brightness(i, brightness);
+    s_core.user_brightness = brightness;
+    update_final_brightness();
 }
+
+
+
+
+static void update_final_brightness(void)
+{
+    uint8_t final = VFD_MAX_BRIGHTNESS;
+
+    if (s_core.auto_brightness_enabled) {
+        // Автояркость по датчику освещённости (LDR → ADC)
+        adc_select_input(s_core.light_sensor_adc - 26);
+        uint16_t raw = adc_read();  // 0..4095
+
+        final = (uint8_t)((raw * VFD_MAX_BRIGHTNESS) / 4095u);
+        if (final < 5u) {
+            final = 5u;  // минимальная яркость в авто-режиме
+        }
+    } else if (s_core.night_mode_enabled) {
+        // Ночной режим по времени RTC
+        if (rtc_running()) {
+            datetime_t now;
+            rtc_get_datetime(&now);
+
+            bool is_night;
+            if (s_core.night_start_hour <= s_core.night_end_hour) {
+                // Интервал без перехода через полночь
+                is_night = (now.hour >= s_core.night_start_hour &&
+                            now.hour <  s_core.night_end_hour);
+            } else {
+                // Интервал с переходом через полночь (23..7)
+                is_night = (now.hour >= s_core.night_start_hour ||
+                            now.hour <  s_core.night_end_hour);
+            }
+
+            if (is_night) {
+                final = 10u;  // фиксированная ночная яркость (как в легаси)
+            } else {
+                final = s_core.user_brightness;
+            }
+        } else {
+            // RTC не запущены — ведём себя как в ручном режиме
+            final = s_core.user_brightness;
+        }
+    } else {
+        // Обычный ручной режим
+        final = s_core.user_brightness;
+    }
+
+    if (final > VFD_MAX_BRIGHTNESS) {
+        final = VFD_MAX_BRIGHTNESS;
+    }
+
+    if (final != s_core.global_brightness) {
+        s_core.global_brightness = final;
+        display_ll_set_brightness_all(final);
+    }
+}
+
+
+
+static void brightness_tick(absolute_time_t now)
+{
+    // Обновляем яркость только если активен авто-режим или night-mode
+    if (!(s_core.auto_brightness_enabled || s_core.night_mode_enabled)) {
+        return;
+    }
+
+    uint32_t now_ms  = to_ms_since_boot(now);
+    uint32_t last_ms = to_ms_since_boot(s_core.brightness_last_update);
+
+    if (now_ms - last_ms < s_core.brightness_period_ms) {
+        return;
+    }
+
+    s_core.brightness_last_update = now;
+    update_final_brightness();
+}
+
+
+
 
 void display_set_auto_brightness(bool enable)
 {
-    // Пока режим не реализован
-    (void)enable;
+    s_core.auto_brightness_enabled = enable;
+    // При смене режима сразу пересчитаем яркость
+    update_final_brightness();
 }
+
 
 void display_set_night_mode(bool enable)
 {
-    // Пока нет night-логики
-    (void)enable;
+    s_core.night_mode_enabled = enable;
+    update_final_brightness();
 }
+
 
 /* ---------- ТОЧКА / ДВОЕТОЧИЕ ---------- */
 
@@ -204,5 +334,8 @@ void display_process(void)
     } else {
         display_fx_tick();
     }
+
+    // --- авто/ночной брайтнес ---
+    brightness_tick(now);
 }
 
