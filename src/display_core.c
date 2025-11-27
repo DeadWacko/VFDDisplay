@@ -8,6 +8,12 @@
 #include "hardware/adc.h"
 #include "hardware/rtc.h"
 
+// --- forward declarations FX / OVERLAY слоя ---
+bool display_fx_is_running(void);
+void display_fx_tick(void);
+
+bool display_is_overlay_running(void);
+void display_overlay_tick(void);
 
 /*
  * NEW HIGH-LEVEL (HL) CORE
@@ -25,14 +31,8 @@
 // ВРЕМЕННЫЕ дефолтные пины — под  текущий стенд.
 // TODO: потом вынести в конфиг / CMake.
 
-
-
-bool display_fx_is_running(void);   
-void display_overlay_tick(void);
-
 static void update_final_brightness(void);
 static void brightness_tick(absolute_time_t now);
-
 
 #define DISPLAY_DEFAULT_DATA_PIN     15
 #define DISPLAY_DEFAULT_CLOCK_PIN    14
@@ -113,7 +113,6 @@ void display_init(uint8_t digit_count)
     memset(&s_core, 0, sizeof(s_core));
     s_core.digit_count       = digit_count;
 
-
     s_core.user_brightness         = VFD_MAX_BRIGHTNESS;
     s_core.global_brightness       = VFD_MAX_BRIGHTNESS;
 
@@ -155,14 +154,21 @@ void display_init(uint8_t digit_count)
 
 display_mode_t display_get_mode(void)
 {
-    return s_core.mode;
+    // Режим определяется реальным состоянием FX/OVERLAY,
+    // чтобы не было рассинхрона между флагами.
+    if (display_is_overlay_running()) {
+        return DISPLAY_MODE_OVERLAY;
+    }
+    if (display_fx_is_running()) {
+        return DISPLAY_MODE_EFFECT;
+    }
+    return DISPLAY_MODE_CONTENT;
 }
 
 bool display_is_effect_running(void)
 {
     return display_fx_is_running();
 }
-
 
 /* ---------- ЯРКОСТЬ ---------- */
 
@@ -174,9 +180,6 @@ void display_set_brightness(uint8_t brightness)
     s_core.user_brightness = brightness;
     update_final_brightness();
 }
-
-
-
 
 static void update_final_brightness(void)
 {
@@ -232,8 +235,6 @@ static void update_final_brightness(void)
     }
 }
 
-
-
 static void brightness_tick(absolute_time_t now)
 {
     // Обновляем яркость только если активен авто-режим или night-mode
@@ -252,9 +253,6 @@ static void brightness_tick(absolute_time_t now)
     update_final_brightness();
 }
 
-
-
-
 void display_set_auto_brightness(bool enable)
 {
     s_core.auto_brightness_enabled = enable;
@@ -262,13 +260,11 @@ void display_set_auto_brightness(bool enable)
     update_final_brightness();
 }
 
-
 void display_set_night_mode(bool enable)
 {
     s_core.night_mode_enabled = enable;
     update_final_brightness();
 }
-
 
 /* ---------- ТОЧКА / ДВОЕТОЧИЕ ---------- */
 
@@ -297,6 +293,18 @@ void display_core_set_buffer(const vfd_seg_t *buf, uint8_t size)
         s_core.hl_buffer[i] = buf[i];
 
     hl_push_buffer_to_ll();
+}
+
+/**
+ * Доступ к текущему HL/CONTENT-буферу.
+ *
+ * Важно:
+ *  - возвращаем внутренний буфер ядра (без копирования);
+ *  - вызывать аккуратно (желательно только для отладочных задач).
+ */
+vfd_seg_t *display_content_buffer(void)
+{
+    return s_core.hl_buffer;
 }
 
 /* ============================================================
@@ -335,7 +343,15 @@ void display_process(void)
         display_fx_tick();
     }
 
+    // Обновляем внутренний "mode" (на случай, если он где-то ещё будет использоваться).
+    if (display_is_overlay_running()) {
+        s_core.mode = DISPLAY_MODE_OVERLAY;
+    } else if (display_fx_is_running()) {
+        s_core.mode = DISPLAY_MODE_EFFECT;
+    } else {
+        s_core.mode = DISPLAY_MODE_CONTENT;
+    }
+
     // --- авто/ночной брайтнес ---
     brightness_tick(now);
 }
-
