@@ -33,15 +33,25 @@ typedef enum {
 
 typedef enum {
     FX_NONE = 0,
+    // Яркостные (Прозрачные)
     FX_FADE_IN,
     FX_FADE_OUT,
     FX_PULSE,
     FX_WAVE,
+    FX_MATRIX,    // Scanner
+    
+    // Структурные (Блокирующие)
     FX_GLITCH,
-    FX_MATRIX,
     FX_MORPH,
     FX_DISSOLVE,
+    
+    // Новые текстовые
+    FX_MARQUEE,   // Бегущая строка
+    FX_SLIDE_IN   // Заезд текста
 } fx_type_t;
+
+
+
 
 /* ============================================================================
    Overlay types (one at a time)
@@ -53,6 +63,9 @@ typedef enum {
     OV_WIFI,
     OV_NTP,
 } overlay_type_t;
+
+
+#define FX_TEXT_MAX_LEN 64 // Максимальная длина бегущей строки
 
 /* ============================================================================
    MAIN STATE STRUCTURE
@@ -135,6 +148,21 @@ typedef struct display_state_s {
     uint32_t        fx_dissolve_step;                        // текущий шаг по dissolve_order[]
 
 
+
+
+    /* ---- НОВЫЕ ПОЛЯ ---- */
+    
+    // Общий буфер цели для эффектов, которым нужно к чему-то прийти (Slot, Decode)
+    vfd_seg_t       fx_target_buffer[VFD_MAX_DIGITS];
+
+    // Slot Machine & Decode
+    uint32_t        fx_stage_step;    // Какой разряд сейчас "останавливается"
+
+    // Ping Pong
+    int32_t         fx_pingpong_pos;  // Текущая позиция (может быть float logic внутри)
+    bool            fx_pingpong_dir;  // Направление
+
+
     /* =========================================================================
        OVERLAY ENGINE STATE
        ======================================================================= */
@@ -181,6 +209,10 @@ typedef struct display_state_s {
 
     void (*on_effect_finished)(fx_type_t type);
     void (*on_overlay_finished)(overlay_type_t type);
+
+    // Буфер для текстовых эффектов
+    char     fx_text_buffer[FX_TEXT_MAX_LEN];
+    uint16_t fx_text_len;
 
 } display_state_t;
 

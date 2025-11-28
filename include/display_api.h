@@ -50,6 +50,23 @@ void display_show_date(uint8_t day, uint8_t month);
 /* Получить доступ к текущему CONTENT-буферу */
 vfd_seg_t *display_content_buffer(void);
 
+
+
+
+/* 
+ * Бегущая строка.
+ * text - строка (до 63 символов).
+ * speed_ms - скорость сдвига на один символ (например, 200 мс).
+ */
+bool display_fx_marquee(const char *text, uint32_t speed_ms);
+
+/* 
+ * Текст выезжает справа и останавливается.
+ * text - должен влезать в экран (например, 4 символа).
+ * speed_ms - скорость выезда.
+ */
+bool display_fx_slide_in(const char *text, uint32_t speed_ms);
+
 /* =====================
  *        ЭФФЕКТЫ
  * ===================== */

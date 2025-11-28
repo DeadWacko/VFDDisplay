@@ -38,14 +38,16 @@ void update_clock_simulation(void) {
    ========================================================================== */
 typedef enum {
     STATE_CLOCK_NORMAL = 0, // Просто часы
-    STATE_FX_PULSE,         // Дыхание (прозрачный)
-    STATE_FX_WAVE,          // Волна (прозрачный) -> ДОБАВЛЕНО
-    STATE_FX_SCANNER,       // Сканер/KITT (бывшая Matrix, прозрачный)
-    STATE_FX_GLITCH,        // Глитч (блокирующий)
-    STATE_SHOW_TEXT,        // Текст
+    STATE_FX_SLIDE_IN,      // [NEW] Заезд текста
+    STATE_FX_MARQUEE,       // [NEW] Бегущая строка
+    STATE_FX_PULSE,         // Дыхание
+    STATE_FX_WAVE,          // Волна
+    STATE_FX_SCANNER,       // Сканер
+    STATE_FX_GLITCH,        // Глитч
+    STATE_SHOW_TEXT,        // Текст статический
     STATE_FX_MORPH,         // Морфинг
     STATE_FX_DISSOLVE,      // Рассыпание
-    STATE_FX_FADE,          // Fade Out -> Wait -> Fade In
+    STATE_FX_FADE,          // Fade Out -> Fade In
     STATE_MAX
 } demo_state_t;
 
@@ -57,7 +59,6 @@ void set_demo_state(demo_state_t new_state) {
     g_state = new_state;
     g_state_start_time = get_absolute_time();
     g_state_setup_done = false;
-    // printf(">>> DEMO STATE: %d\n", g_state); // Раскомментируй для отладки в USB UART
 }
 
 void process_demo_sequence(void) {
@@ -66,79 +67,107 @@ void process_demo_sequence(void) {
 
     switch (g_state) {
         // --------------------------------------------------------------------
-        // 1. Обычные часы (4 секунды)
+        // 1. Обычные часы (3 секунды)
         // --------------------------------------------------------------------
         case STATE_CLOCK_NORMAL:
             if (!g_state_setup_done) {
-                display_set_dot_blinking(true); // Точки мигают
-                display_set_brightness(255);    // Полная яркость
+                display_set_dot_blinking(true); 
+                display_set_brightness(255);    
                 g_state_setup_done = true;
             }
             display_show_time(g_hour, g_min, true);
 
-            if (elapsed_ms > 4000) set_demo_state(STATE_FX_PULSE);
+            // ПЕРЕХОД К SLIDE IN
+            if (elapsed_ms > 3000) set_demo_state(STATE_FX_SLIDE_IN);
             break;
 
         // --------------------------------------------------------------------
-        // 2. Pulse (Дыхание) - 5 секунд
-        // Яркость плавно дышит всем экраном. Часы идут.
+        // 2. Slide In (Заезд текста "HI")
+        // --------------------------------------------------------------------
+        case STATE_FX_SLIDE_IN:
+            if (!g_state_setup_done) {
+                display_set_dot_blinking(false);
+                // Скорость 200мс, текст "HI !"
+                display_fx_slide_in("13.15", 200);
+                g_state_setup_done = true;
+            }
+            
+            // Ждем завершения эффекта + небольшая пауза, чтобы прочитать
+            // Эффект сам остановится, но нам нужно переключить стейт
+            if (elapsed_ms > 2000) set_demo_state(STATE_FX_MARQUEE);
+            break;
+
+        // --------------------------------------------------------------------
+        // 3. Marquee (Бегущая строка)
+        // --------------------------------------------------------------------
+        case STATE_FX_MARQUEE:
+            if (!g_state_setup_done) {
+                // Длинный текст, скорость 180мс
+                display_fx_marquee("192.168.1.4", 180);
+                g_state_setup_done = true;
+            }
+
+            // Переходим дальше, когда эффект закончится
+            if (!display_is_effect_running()) {
+                set_demo_state(STATE_FX_PULSE);
+            }
+            break;
+
+        // --------------------------------------------------------------------
+        // 4. Pulse (Дыхание)
         // --------------------------------------------------------------------
         case STATE_FX_PULSE:
             if (!g_state_setup_done) {
-                display_fx_pulse(5000); 
+                display_set_dot_blinking(true); // Вернули точки
+                display_fx_pulse(4000); 
                 g_state_setup_done = true;
             }
-            display_show_time(g_hour, g_min, true);
+            display_show_time(g_hour, g_min, true); // Показываем время под эффектом
 
-            if (elapsed_ms > 5500) set_demo_state(STATE_FX_WAVE);
+            if (elapsed_ms > 4500) set_demo_state(STATE_FX_WAVE);
             break;
 
         // --------------------------------------------------------------------
-        // 3. Wave (Волна) - 5 секунд [НОВЫЙ]
-        // Яркость переливается слева направо. Часы идут.
+        // 5. Wave (Волна)
         // --------------------------------------------------------------------
         case STATE_FX_WAVE:
             if (!g_state_setup_done) {
-                display_fx_wave(5000); 
+                display_fx_wave(4000); 
                 g_state_setup_done = true;
             }
             display_show_time(g_hour, g_min, true);
 
-            if (elapsed_ms > 5500) set_demo_state(STATE_FX_SCANNER);
+            if (elapsed_ms > 4500) set_demo_state(STATE_FX_SCANNER);
             break;
 
         // --------------------------------------------------------------------
-        // 4. Scanner (KITT) - 5 секунд
-        // Бегающий огонек. Часы идут.
+        // 6. Scanner (KITT)
         // --------------------------------------------------------------------
         case STATE_FX_SCANNER:
             if (!g_state_setup_done) {
-                // Вызываем matrix, который мы переделали в сканер
-                display_fx_matrix(5000, 0); 
+                display_fx_matrix(4000, 0); 
                 g_state_setup_done = true;
             }
             display_show_time(g_hour, g_min, true);
 
-            if (elapsed_ms > 5500) set_demo_state(STATE_FX_GLITCH);
+            if (elapsed_ms > 4500) set_demo_state(STATE_FX_GLITCH);
             break;
 
         // --------------------------------------------------------------------
-        // 5. Glitch - 3 секунды
-        // Цифры прыгают и сбоят.
+        // 7. Glitch
         // --------------------------------------------------------------------
         case STATE_FX_GLITCH:
             if (!g_state_setup_done) {
                 display_fx_glitch(3000);
                 g_state_setup_done = true;
             }
-            // Контент обновлять не обязательно (он блокируется), но можно
             display_show_time(g_hour, g_min, true);
 
             if (elapsed_ms > 3500) set_demo_state(STATE_SHOW_TEXT);
             break;
 
         // --------------------------------------------------------------------
-        // 6. Текст COOL (2 секунды)
+        // 8. Текст COOL
         // --------------------------------------------------------------------
         case STATE_SHOW_TEXT:
             if (!g_state_setup_done) {
@@ -151,22 +180,16 @@ void process_demo_sequence(void) {
             break;
 
         // --------------------------------------------------------------------
-        // 7. Morph "COOL" -> "HEAT" (2 секунды)
+        // 9. Morph "COOL" -> "HEAT"
         // --------------------------------------------------------------------
         case STATE_FX_MORPH:
             if (!g_state_setup_done) {
-                // 1. Показываем HEAT в буфер (но не пушим в LL, если бы делали руками)
-                // Но проще просто подготовить массив сегментов
                 display_show_text("HEAT"); 
-                
                 vfd_seg_t target[4];
                 vfd_seg_t *current = display_content_buffer();
                 for(int i=0; i<4; i++) target[i] = current[i];
 
-                // 2. Возвращаем исходное слово COOL
                 display_show_text("COOL");
-
-                // 3. Запускаем превращение
                 display_fx_morph(2000, target, 20); 
                 g_state_setup_done = true;
             }
@@ -175,13 +198,10 @@ void process_demo_sequence(void) {
             break;
 
         // --------------------------------------------------------------------
-        // 8. Dissolve (Рассыпание) - 2 секунды
-        // Эффектно рассыпаем слово HEAT
+        // 10. Dissolve
         // --------------------------------------------------------------------
         case STATE_FX_DISSOLVE:
             if (!g_state_setup_done) {
-                // Можно рассыпать HEAT, или показать "8888" для эффектности
-                // display_show_text("8888"); 
                 display_fx_dissolve(2000);
                 g_state_setup_done = true;
             }
@@ -190,25 +210,20 @@ void process_demo_sequence(void) {
             break;
 
         // --------------------------------------------------------------------
-        // 9. Fade Out / In (Полный цикл)
+        // 11. Fade Out / In
         // --------------------------------------------------------------------
         case STATE_FX_FADE:
             if (!g_state_setup_done) {
-                // Гасим экран
                 display_fx_fade_out(1500);
                 g_state_setup_done = true;
             }
 
-            // В середине темноты подменяем контент обратно на часы
             if (elapsed_ms > 1600 && elapsed_ms < 1700) {
                  display_show_time(g_hour, g_min, true);
             }
 
-            // Когда погасло (1.5с) + пауза (0.5с), включаем обратно
             if (elapsed_ms > 2000 && !display_is_effect_running()) {
                  display_fx_fade_in(1500);
-                 
-                 // Хак для стейт-машины: переходим в ожидание, сбросив таймер
                  g_state_start_time = now; 
                  g_state = STATE_MAX; 
             }
@@ -217,7 +232,6 @@ void process_demo_sequence(void) {
         case STATE_MAX:
              display_show_time(g_hour, g_min, true);
              if (elapsed_ms > 1600) {
-                 // Круг замкнулся
                  set_demo_state(STATE_CLOCK_NORMAL);
              }
              break;

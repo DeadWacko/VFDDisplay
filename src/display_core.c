@@ -42,13 +42,24 @@ display_state_t *const g_display = &g_display_state;
 static bool core_is_fx_blocking(void)
 {
     if (!g_display->fx_active) return false;
+    
     switch (g_display->fx_type) {
+        // Эти эффекты полностью управляют сегментами
         case FX_GLITCH:
         case FX_MORPH:
         case FX_DISSOLVE:
+        case FX_MARQUEE:  // [NEW]
+        case FX_SLIDE_IN: // [NEW]
             return true;
+            
+        // А эти только яркостью (часы видны)
+        case FX_FADE_IN:
+        case FX_FADE_OUT:
+        case FX_PULSE:
+        case FX_WAVE:
+        case FX_MATRIX:
         default:
-            return false; // Intensity effects
+            return false;
     }
 }
 

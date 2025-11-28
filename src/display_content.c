@@ -72,7 +72,7 @@ void display_show_time(uint8_t hours, uint8_t minutes, bool show_colon)
     buf[2] = display_font_digit(minutes / 10);
     buf[3] = display_font_digit(minutes % 10);
 
-    // Точки: в твоей маске бит 7 = DP. 
+    // Точки: в  маске бит 7 = DP. 
     // Если нужно двоеточие, обычно зажигают DP у 2-го разряда (индекс 1)
     if (show_colon) {
         buf[1] |= 0x80; 
