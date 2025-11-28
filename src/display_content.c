@@ -4,18 +4,8 @@
 #include <string.h>
 #include <stdio.h>
 
-/*
- * CONTENT LAYER
- * -------------
- * Преобразует логические данные (числа, время, дату, текст)
- * в сегментный буфер HL и отдаёт его ядру.
- *
- * CHAR_MAP (шрифт) лежит в display_font.[ch].
- */
-
 extern void display_core_set_buffer(const vfd_seg_t *buf, uint8_t size);
 
-/* Аккуратный helper: получить фактическое число разрядов от LL */
 static uint8_t get_active_digits(void)
 {
     uint8_t n = display_ll_get_digit_count();
@@ -27,26 +17,38 @@ static uint8_t get_active_digits(void)
 /* ============================================================
  *     ЧИСЛА
  * ============================================================ */
-
 void display_show_number(int32_t value)
 {
     uint8_t digits = get_active_digits();
     vfd_seg_t buf[VFD_MAX_DIGITS];
     memset(buf, 0, sizeof(buf));
 
-    if (value < 0) {
-        // TODO: когда появится символ "-", можно будет его реально рисовать
-        value = -value;
-    }
+    bool negative = (value < 0);
+    if (negative) value = -value;
 
-    // Правое выравнивание
     for (uint8_t i = 0; i < digits; i++) {
+        if (value == 0 && i > 0 && !negative) break; // ведущие нули гасим
+
         uint8_t d = (uint8_t)(value % 10);
         value /= 10;
-
-        uint8_t pos = (uint8_t)(digits - 1 - i);
-        buf[pos] = display_font_digit(d);
+        
+        // Если число кончилось, а надо знак минус
+        if (value == 0 && negative) {
+            // Рисуем цифру, а в следующем цикле нарисуем минус
+            buf[digits - 1 - i] = display_font_digit(d);
+            
+            // Если есть место под минус
+            if (i + 1 < digits) {
+                 buf[digits - 1 - (i+1)] = display_font_get_char('-');
+            }
+            negative = false; // минус отрисован
+        } else {
+            buf[digits - 1 - i] = display_font_digit(d);
+        }
     }
+    
+    // Если минус остался (число 0)
+    if (negative && digits > 0) buf[0] = display_font_get_char('-');
 
     display_core_set_buffer(buf, digits);
 }
@@ -54,7 +56,6 @@ void display_show_number(int32_t value)
 /* ============================================================
  *     ВРЕМЯ (HH:MM)
  * ============================================================ */
-
 void display_show_time(uint8_t hours, uint8_t minutes, bool show_colon)
 {
     uint8_t digits = get_active_digits();
@@ -62,34 +63,27 @@ void display_show_time(uint8_t hours, uint8_t minutes, bool show_colon)
     memset(buf, 0, sizeof(buf));
 
     if (digits < 4) {
-        // Если вдруг меньше 4 разрядов — выводим только младшие цифры
         display_show_number((int32_t)(hours * 100 + minutes));
         return;
     }
 
-    uint8_t h1 = hours / 10;
-    uint8_t h2 = hours % 10;
-    uint8_t m1 = minutes / 10;
-    uint8_t m2 = minutes % 10;
+    buf[0] = display_font_digit(hours / 10);
+    buf[1] = display_font_digit(hours % 10);
+    buf[2] = display_font_digit(minutes / 10);
+    buf[3] = display_font_digit(minutes % 10);
 
-    buf[0] = display_font_digit(h1);
-    buf[1] = display_font_digit(h2);
-    buf[2] = display_font_digit(m1);
-    buf[3] = display_font_digit(m2);
-
-    // Точечки — грубо: включаем DP на середине (бит 7)
+    // Точки: в твоей маске бит 7 = DP. 
+    // Если нужно двоеточие, обычно зажигают DP у 2-го разряда (индекс 1)
     if (show_colon) {
-        buf[1] |= 0b10000000;
-        
+        buf[1] |= 0x80; 
     }
 
-    display_core_set_buffer(buf, 4);
+    display_core_set_buffer(buf, digits);
 }
 
 /* ============================================================
  *   ДАТА (DDMM)
  * ============================================================ */
-
 void display_show_date(uint8_t day, uint8_t month)
 {
     uint8_t digits = get_active_digits();
@@ -105,14 +99,16 @@ void display_show_date(uint8_t day, uint8_t month)
     buf[1] = display_font_digit(day % 10);
     buf[2] = display_font_digit(month / 10);
     buf[3] = display_font_digit(month % 10);
+    
+    // Точка разделитель
+    buf[1] |= 0x80;
 
-    display_core_set_buffer(buf, 4);
+    display_core_set_buffer(buf, digits);
 }
 
 /* ============================================================
- *     ТЕКСТ (минимум — цифры)
+ *     ТЕКСТ (Теперь поддерживает буквы!)
  * ============================================================ */
-
 void display_show_text(const char *text)
 {
     uint8_t digits = get_active_digits();
@@ -123,14 +119,24 @@ void display_show_text(const char *text)
         display_core_set_buffer(buf, digits);
         return;
     }
-
-    for (uint8_t i = 0; i < digits && text[i]; i++) {
-        char c = text[i];
-        if (c >= '0' && c <= '9') {
-            buf[i] = display_font_digit((uint8_t)(c - '0'));
-        } else {
-            buf[i] = 0; // Пока все не-цифры — пусто
+    
+    int str_idx = 0;
+    int buf_idx = 0;
+    
+    // Простейший вывод слева направо
+    while(text[str_idx] && buf_idx < digits) {
+        char c = text[str_idx];
+        vfd_seg_t seg = display_font_get_char(c);
+        
+        // Проверяем точку после символа (например "12.34")
+        if (text[str_idx+1] == '.') {
+            seg |= 0x80; // Добавляем DP (бит 7)
+            str_idx++;   // Пропускаем точку
         }
+        
+        buf[buf_idx] = seg;
+        str_idx++;
+        buf_idx++;
     }
 
     display_core_set_buffer(buf, digits);
