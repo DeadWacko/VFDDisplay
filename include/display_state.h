@@ -86,18 +86,54 @@ typedef struct display_state_s {
     volatile uint8_t final_brightness[VFD_MAX_DIGITS];
 
     /* =========================================================================
-       EFFECT ENGINE STATE
+       EFFECT ENGINE STATE (one effect at a time)
        ======================================================================= */
 
-    volatile bool      fx_active;
-    volatile fx_type_t fx_type;
+    volatile bool      fx_active;          // сейчас запущен какой-то эффект
+    volatile fx_type_t fx_type;            // тип эффекта
 
-    absolute_time_t fx_start_time;
-    uint32_t        fx_duration_ms;     // 0 = infinite
-    uint32_t        fx_frame_ms;
-    uint32_t        fx_elapsed_ms;
-    uint32_t        fx_total_steps;
-    uint32_t        fx_current_step;
+    // Общее время/шаги для всех FX
+    absolute_time_t fx_start_time;         // когда стартовали (absolute_time_t)
+    uint32_t        fx_duration_ms;        // общая длительность эффекта, 0 = infinite
+    uint32_t        fx_frame_ms;           // базовый шаг (кадр) для step-эффектов
+    uint32_t        fx_elapsed_ms;         // последний посчитанный elapsed (для отладки)
+    uint32_t        fx_total_steps;        // duration_ms / frame_ms (или спец. значение)
+    uint32_t        fx_current_step;       // 0..fx_total_steps-1
+
+    // Базовая яркость до запуска эффекта (для восстановления)
+    uint8_t         fx_base_brightness;
+
+    /* ---- GLITCH (динамический фликер) ------------------------------------- */
+
+    bool            fx_glitch_active;      // идёт ли сейчас burst фликера
+    uint32_t        fx_glitch_last_ms;     // последний тик внутри burst
+    uint32_t        fx_glitch_next_ms;     // когда стартовать следующий burst (от начала FX)
+    uint32_t        fx_glitch_step;        // шаг внутри паттерна
+    uint8_t         fx_glitch_digit;       // какой разряд трогаем
+    uint8_t         fx_glitch_bit;         // какой бит (0..6), DP не трогаем
+    vfd_seg_t       fx_glitch_saved_digit; // исходная маска этого разряда
+
+    /* ---- MATRIX RAIN ------------------------------------------------------ */
+
+    uint32_t        fx_matrix_last_ms;                       // последний кадр matrix
+    uint32_t        fx_matrix_step;                          // счётчик шагов
+    uint32_t        fx_matrix_total_steps;                   // всего шагов
+    uint8_t         fx_matrix_min_percent;                   // минимальный % яркости
+    uint8_t         fx_matrix_brightness_percent[VFD_MAX_DIGITS]; // 0..100 на разряд
+
+    /* ---- MORPH (плавный переход цифра→цифра) ------------------------------ */
+
+    vfd_seg_t       fx_morph_start[VFD_MAX_DIGITS];          // стартовые сегменты
+    vfd_seg_t       fx_morph_target[VFD_MAX_DIGITS];         // целевые сегменты
+    uint32_t        fx_morph_step;                           // текущий шаг
+    uint32_t        fx_morph_steps;                          // всего шагов
+
+    /* ---- DISSOLVE (рассыпающиеся сегменты) -------------------------------- */
+
+    uint8_t         fx_dissolve_order[VFD_MAX_DIGITS * 8];   // порядок выключения битов
+    uint32_t        fx_dissolve_total_bits;                  // всего битов, задействованных в FX
+    uint32_t        fx_dissolve_step;                        // текущий шаг по dissolve_order[]
+
 
     /* =========================================================================
        OVERLAY ENGINE STATE

@@ -181,6 +181,11 @@ static void core_update_brightness_now(void)
 /* Периодическое обновление яркости (по таймеру) */
 static void core_brightness_tick(absolute_time_t now)
 {
+    // Если запущен FX или Overlay — brightness logic запрещена
+    if (g_display->fx_active || g_display->ov_active) {
+        return;
+    }
+
     if (!(g_display->auto_brightness_enabled || g_display->night_mode_enabled))
         return;
 
@@ -193,6 +198,7 @@ static void core_brightness_tick(absolute_time_t now)
     g_display->brightness_last_update = now;
     core_update_brightness_now();
 }
+
 
 /* Мигание точки (колонки и бит задаются в g_display) */
 static void core_dot_blink_tick(absolute_time_t now)
