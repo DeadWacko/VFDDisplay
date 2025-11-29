@@ -1,312 +1,219 @@
 #include "display_api.h"
 #include "display_ll.h"
 #include "display_font.h"
+#include "display_state.h"
 
 #include "pico/stdlib.h"
 #include <stdbool.h>
 #include <stdint.h>
 
 /*
- * OVERLAY LAYER # СЕЙЧАС НЕ ИСПОЛЬЗУЕТСЯ НИГДЕ. 
+ * OVERLAY LAYER
  * -------------
- * Перенос boot / WiFi / NTP оверлеев из легаси в отдельный модуль HL.
+ * Реализация временных уведомлений (Boot, WiFi, NTP),
+ * которые имеют высший приоритет над контентом и эффектами.
  *
- * ВАЖНО:
- *  - Работает ТОЛЬКО поверх уже существующего контента.
- *  - На старте оверлея сохраняет текущий LL-буфер сегментов.
- *  - Во время анимации пишет напрямую в LL-буфер (сегменты), не трогая FX.
- *  - По завершении восстанавливает сохранённый LL-буфер.
- *
- * display_process():
- *   if (display_is_overlay_running())
- *       display_overlay_tick();
- *   else
- *       display_fx_tick();
+ * Архитектура v4.0:
+ * - Состояние хранится в g_display.
+ * - Используются безопасные методы LL (set_digit_raw).
+ * - Логика snapshot/restore реализована через saved_buffer в g_display.
  */
 
-typedef enum {
-    OVERLAY_TYPE_NONE = 0,
-    OVERLAY_TYPE_BOOT,
-    OVERLAY_TYPE_WIFI,
-    OVERLAY_TYPE_NTP,
-} overlay_type_t;
+// ============================================================================
+//  Вспомогательные функции
+// ============================================================================
 
-typedef struct {
-    bool            active;
-    overlay_type_t  type;
-
-    absolute_time_t last_tick;
-    uint32_t        frame_ms;          // период кадров (общий для анимации)
-
-    // шаги анимации
-    uint8_t         step;
-    uint8_t         loop;
-
-    // сохранённый базовый LL-буфер
-    vfd_seg_t       saved_buffer[VFD_MAX_DIGITS];
-    uint8_t         saved_digits;
-    bool            buffer_valid;
-} overlay_state_t;
-
-static overlay_state_t s_ov = {
-    .active        = false,
-    .type          = OVERLAY_TYPE_NONE,
-    .frame_ms      = 150,
-    .step          = 0,
-    .loop          = 0,
-    .saved_digits  = 0,
-    .buffer_valid  = false,
-};
-
-/* ------------------------ УТИЛИТЫ ------------------------ */
-
-static inline uint8_t ov_get_digits(void)
+/* Создание снимка экрана перед запуском оверлея */
+static void ov_save_snapshot(void)
 {
-    uint8_t n = display_ll_get_digit_count();
-    if (n == 0 || n > VFD_MAX_DIGITS) n = VFD_MAX_DIGITS;
-    return n;
-}
+    if (!display_ll_is_initialized()) return;
+    
+    // Если уже есть сохраненный буфер (например, от FX), не перезаписываем его,
+    // чтобы не потерять исходный контент.
+    if (g_display->saved_valid) return;
 
-static void ov_save_base_buffer(void)
-{
-    if (!display_ll_is_initialized())
-        return;
-
-    if (s_ov.buffer_valid)
-        return;
-
-    vfd_seg_t *buf = display_ll_get_buffer();
-    uint8_t digits = ov_get_digits();
+    vfd_seg_t *ll_buf = display_ll_get_buffer(); // Только чтение
+    uint8_t digits = g_display->digit_count;
 
     for (uint8_t i = 0; i < digits; i++) {
-        s_ov.saved_buffer[i] = buf[i];
+        g_display->saved_content_buffer[i] = ll_buf[i];
+        // Яркость тоже можно сохранить, если оверлей ее меняет
     }
-    s_ov.saved_digits = digits;
-    s_ov.buffer_valid = true;
+    g_display->saved_valid = true;
 }
 
-static void ov_restore_base_buffer(void)
+/* Восстановление экрана после завершения */
+static void ov_restore_snapshot(void)
 {
-    if (!display_ll_is_initialized())
-        return;
+    if (!display_ll_is_initialized()) return;
+    if (!g_display->saved_valid) return;
 
-    if (!s_ov.buffer_valid)
-        return;
-
-    vfd_seg_t *buf = display_ll_get_buffer();
-
-    for (uint8_t i = 0; i < s_ov.saved_digits; i++) {
-        buf[i] = s_ov.saved_buffer[i];
+    uint8_t digits = g_display->digit_count;
+    for (uint8_t i = 0; i < digits; i++) {
+        display_ll_set_digit_raw(i, g_display->saved_content_buffer[i]);
     }
-
-    s_ov.buffer_valid = false;
+    g_display->saved_valid = false;
 }
 
-/* ------------------------ ЗАВЕРШЕНИЕ ------------------------ */
-
+/* Завершение работы оверлея */
 static void ov_finish(void)
 {
-    ov_restore_base_buffer();
+    ov_restore_snapshot();
 
-    s_ov.active       = false;
-    s_ov.type         = OVERLAY_TYPE_NONE;
-    s_ov.step         = 0;
-    s_ov.loop         = 0;
-    s_ov.frame_ms     = 150;
+    g_display->ov_active = false;
+    g_display->ov_type   = OV_NONE;
+    
+    // Вызов колбэка, если он задан
+    if (g_display->on_overlay_finished) {
+        g_display->on_overlay_finished(g_display->ov_type);
+    }
 }
 
-/* ======================== ПУБЛИЧНЫЙ API ======================== */
+// ============================================================================
+//  Публичный API
+// ============================================================================
 
 bool display_is_overlay_running(void)
 {
-    return s_ov.active;
+    return g_display->ov_active;
 }
 
 void display_overlay_stop(void)
 {
-    if (!s_ov.active)
-        return;
-
+    if (!g_display->ov_active) return;
     ov_finish();
 }
 
-/*
- * display_overlay_boot()
- * ----------------------
- * Boot-анимация: 0,1,2,...,9 на всех разрядах.
- * Параметр duration_ms сейчас не используется — как в легаси, где были фиксированные тайминги.
- */
-bool display_overlay_boot(uint32_t duration_ms)
+static bool overlay_start_common(overlay_type_t type, uint32_t frame_ms)
 {
-    (void)duration_ms;
+    if (!g_display->initialized) return false;
+    if (g_display->ov_active) return false; // Не прерываем текущий оверлей
 
-    if (s_ov.active)
-        return false;
+    ov_save_snapshot();
 
-    ov_save_base_buffer();
-
-    s_ov.type      = OVERLAY_TYPE_BOOT;
-    s_ov.active    = true;
-    s_ov.step      = 0;
-    s_ov.loop      = 0;
-    s_ov.frame_ms  = 150;  // ~150 мс на цифру
-    s_ov.last_tick = get_absolute_time();
+    g_display->ov_type      = type;
+    g_display->ov_active    = true;
+    g_display->ov_step      = 0;
+    g_display->ov_loop      = 0;
+    g_display->ov_frame_ms  = frame_ms;
+    g_display->ov_start_time = get_absolute_time(); // Используем как last_tick
 
     return true;
 }
 
-/*
- * display_overlay_wifi()
- * ----------------------
- * WiFi-анимация: "8888" / "    " / "8888" / ...
- */
+bool display_overlay_boot(uint32_t duration_ms)
+{
+    (void)duration_ms; // Игнорируем, используем фиксированную логику
+    return overlay_start_common(OV_BOOT, 150);
+}
+
 bool display_overlay_wifi(uint32_t duration_ms)
 {
     (void)duration_ms;
-
-    if (s_ov.active)
-        return false;
-
-    ov_save_base_buffer();
-
-    s_ov.type      = OVERLAY_TYPE_WIFI;
-    s_ov.active    = true;
-    s_ov.step      = 0;
-    s_ov.loop      = 0;
-    s_ov.frame_ms  = 200;  // немного медленнее мигание
-    s_ov.last_tick = get_absolute_time();
-
-    return true;
+    return overlay_start_common(OV_WIFI, 200);
 }
 
-/*
- * display_overlay_ntp()
- * ---------------------
- * NTP-анимация: бегущая "8" по разрядам: 0,1,2,3,2,1 ... (несколько циклов).
- */
 bool display_overlay_ntp(uint32_t duration_ms)
 {
     (void)duration_ms;
-
-    if (s_ov.active)
-        return false;
-
-    ov_save_base_buffer();
-
-    s_ov.type      = OVERLAY_TYPE_NTP;
-    s_ov.active    = true;
-    s_ov.step      = 0;
-    s_ov.loop      = 0;
-    s_ov.frame_ms  = 150;
-    s_ov.last_tick = get_absolute_time();
-
-    return true;
+    return overlay_start_common(OV_NTP, 150);
 }
 
-/* ======================== ОСНОВНОЙ TICK ======================== */
+// ============================================================================
+//  Логика обновления (Tick)
+// ============================================================================
 
-/*
- * Внутренний тик оверлея.
- * Вызывать из display_process(), если display_is_overlay_running() == true.
- */
 void display_overlay_tick(void)
 {
-    if (!s_ov.active)
-        return;
+    if (!g_display->ov_active) return;
 
     absolute_time_t now = get_absolute_time();
     uint32_t now_ms  = to_ms_since_boot(now);
-    uint32_t last_ms = to_ms_since_boot(s_ov.last_tick);
+    uint32_t last_ms = to_ms_since_boot(g_display->ov_start_time); // Здесь храним last_tick
 
-    if (now_ms - last_ms < s_ov.frame_ms)
-        return;
+    if (now_ms - last_ms < g_display->ov_frame_ms) return;
 
-    s_ov.last_tick = now;
+    // Обновляем метку времени
+    g_display->ov_start_time = now; 
 
-    vfd_seg_t *buf = display_ll_get_buffer();
-    uint8_t digits = ov_get_digits();
-    if (digits == 0)
-        return;
+    uint8_t digits = g_display->digit_count;
 
-    switch (s_ov.type) {
+    switch (g_display->ov_type) {
 
-    case OVERLAY_TYPE_BOOT:
+    /* BOOT: Перебор цифр 0..9 на всех разрядах */
+    case OV_BOOT:
     {
-        // 10 шагов (0..9), потом завершение
-        if (s_ov.step >= 10) {
+        if (g_display->ov_step >= 10) {
             ov_finish();
             return;
         }
 
-        uint8_t d = (uint8_t)(s_ov.step % 10);
-        vfd_seg_t code = g_display_font_digits[d];
+        uint8_t d = (uint8_t)(g_display->ov_step % 10);
+        vfd_seg_t code = display_font_digit(d); // Используем безопасный геттер
 
         for (uint8_t i = 0; i < digits; i++) {
-            buf[i] = code;
+            display_ll_set_digit_raw(i, code);
         }
 
-        s_ov.step++;
+        g_display->ov_step++;
         break;
     }
 
-    case OVERLAY_TYPE_WIFI:
+    /* WIFI: Мигание "8888" */
+    case OV_WIFI:
     {
-        // Мигание "8888" / пусто, 10 шагов
-        if (s_ov.step >= 10) {
+        if (g_display->ov_step >= 10) { // 5 миганий
             ov_finish();
             return;
         }
 
-        bool on = ((s_ov.step & 1u) == 0);
-        vfd_seg_t code_on  = g_display_font_digits[8];
-        vfd_seg_t code_off = 0;
+        bool on = ((g_display->ov_step & 1u) == 0);
+        vfd_seg_t code = on ? display_font_digit(8) : 0;
 
         for (uint8_t i = 0; i < digits; i++) {
-            buf[i] = on ? code_on : code_off;
+            display_ll_set_digit_raw(i, code);
         }
 
-        s_ov.step++;
+        g_display->ov_step++;
         break;
     }
 
-    case OVERLAY_TYPE_NTP:
+    /* NTP: Бегущая восьмерка (Snake) */
+    case OV_NTP:
     {
-        // Паттерн 0,1,2,3,2,1; несколько циклов
+        // Паттерн движения
         static const uint8_t pattern[] = {0, 1, 2, 3, 2, 1};
-        const uint8_t PATTERN_LEN      = (uint8_t)(sizeof(pattern) / sizeof(pattern[0]));
-        const uint8_t LOOPS            = 3;
+        const uint8_t PATTERN_LEN = 6; 
+        const uint8_t LOOPS = 3;
 
-        if (s_ov.loop >= LOOPS) {
+        if (g_display->ov_loop >= LOOPS) {
             ov_finish();
             return;
         }
 
-        if (s_ov.step >= PATTERN_LEN) {
-            s_ov.step = 0;
-            s_ov.loop++;
-            if (s_ov.loop >= LOOPS) {
+        if (g_display->ov_step >= PATTERN_LEN) {
+            g_display->ov_step = 0;
+            g_display->ov_loop++;
+            if (g_display->ov_loop >= LOOPS) {
                 ov_finish();
                 return;
             }
         }
 
-        uint8_t pos = pattern[s_ov.step];
+        // Очищаем экран
+        for (uint8_t i = 0; i < digits; i++) display_ll_set_digit_raw(i, 0);
 
-        vfd_seg_t code_8 = g_display_font_digits[8];
-
-        for (uint8_t i = 0; i < digits; i++) {
-            buf[i] = 0;
-        }
-
+        // Рисуем бегущий сегмент
+        uint8_t pos = pattern[g_display->ov_step];
         if (pos < digits) {
-            buf[pos] = code_8;
+            display_ll_set_digit_raw(pos, display_font_digit(8));
         }
 
-        s_ov.step++;
+        g_display->ov_step++;
         break;
     }
 
-    case OVERLAY_TYPE_NONE:
+    case OV_NONE:
     default:
         ov_finish();
         break;
