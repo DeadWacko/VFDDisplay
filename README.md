@@ -107,7 +107,7 @@ int main() {
 1.  **Прозрачные (Transparent):** Меняют только яркость. Часы продолжают идти сквозь эффект.
     *   `Pulse`, `Wave`, `Scanner` (KITT), `Heartbeat`, `Fade In/Out`.
 2.  **Блокирующие (Blocking):** Захватывают управление сегментами. Контент восстанавливается после завершения.
-    *   `Glitch`, `Morph`, `Dissolve`, `Slot Machine`, `Decode`, `Ping-Pong`.
+    *   `Glitch`, `Morph`, `Dissolve`
 3.  **Текстовые:**
     *   `Marquee` (Бегущая строка), `Slide In`.
 
