@@ -23,7 +23,7 @@
 *   **8-bit PWM:** Плавная регулировка яркости (256 уровней) для каждого разряда.
 
 ### High-Level Core (HL)
-*   **FX Engine v4.0:** 10 встроенных эффектов (Matrix, Glitch, Marquee и др.).
+*   **FX Engine:** 10 встроенных эффектов (Matrix, Glitch, Marquee и др.).
 *   **Transparency:** "Прозрачные" эффекты яркости накладываются поверх идущих часов.
 *   **Text Engine:** Поддержка бегущей строки и вывода текста (Digits + Alpha).
 *   **Overlay System:** Приоритетная система уведомлений (Boot, Wi-Fi, Errors).
