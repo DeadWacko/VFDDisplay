@@ -120,7 +120,7 @@ int main() {
 *   [**API Reference**](docs/HL_API.md) — Описание всех функций для разработчика.
 *   [**Low-Level Driver**](docs/LL_API.md) — Детали работы драйвера железа.
 *   [**Architecture**](docs/ARCHITECTURE.md) — Структура слоев и потоков данных.
-*   [**FX Engine**](docs/FX.md) — Как работает движок эффектов.
+*   [**FX Engine**](docs/Effects_System.md) — Как работает движок эффектов.
 
 ---
 
