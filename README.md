@@ -5,7 +5,7 @@
 [![GitHub stars](https://img.shields.io/github/stars/DeadWacko/VFDDisplay?style=flat-square)](https://github.com/DeadWacko/VFDDisplay/stargazers)
 [![GitHub issues](https://img.shields.io/github/issues/DeadWacko/VFDDisplay?style=flat-square)](https://github.com/DeadWacko/VFDDisplay/issues)
 
-# VFDDisplay Library (v4.0)
+# VFDDisplay Library (v1.0.0)
 
 **Библиотека для управления VFD (вакуумно-люминесцентными) дисплеями на базе микроконтроллера RP2040 (Raspberry Pi Pico).**
 
@@ -23,7 +23,7 @@
 *   **8-bit PWM:** Плавная регулировка яркости (256 уровней) для каждого разряда.
 
 ### High-Level Core (HL)
-*   **FX Engine v4.0:** 10 встроенных эффектов (Matrix, Glitch, Marquee и др.).
+*   **FX Engine:** 10 встроенных эффектов (Matrix, Glitch, Marquee и др.).
 *   **Transparency:** "Прозрачные" эффекты яркости накладываются поверх идущих часов.
 *   **Text Engine:** Поддержка бегущей строки и вывода текста (Digits + Alpha).
 *   **Overlay System:** Приоритетная система уведомлений (Boot, Wi-Fi, Errors).
@@ -120,7 +120,7 @@ int main() {
 *   [**API Reference**](docs/HL_API.md) — Описание всех функций для разработчика.
 *   [**Low-Level Driver**](docs/LL_API.md) — Детали работы драйвера железа.
 *   [**Architecture**](docs/ARCHITECTURE.md) — Структура слоев и потоков данных.
-*   [**FX Engine**](docs/FX.md) — Как работает движок эффектов.
+*   [**FX Engine**](docs/Effects_System.md) — Как работает движок эффектов.
 
 ---
 
