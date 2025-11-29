@@ -81,5 +81,5 @@ target_link_libraries(vfd_display
 add_subdirectory(examples/ll_test)
 add_subdirectory(examples/hl_test)
 # На будущее:
-# add_subdirectory(examples/clock_basic)
+add_subdirectory(examples/clock_ll_basic) # <--- ДОБАВИТЬ ЭТУ СТРОКУ
 # add_subdirectory(examples/fx_showcase)
