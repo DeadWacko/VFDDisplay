@@ -2,31 +2,31 @@
 #define DISPLAY_FONT_H
 
 #include <stdint.h>
-#include "display_ll.h" // чтобы знать тип vfd_seg_t
+#include "display_ll.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 /*
- * Глобальный массив масок (определен в display_font.c)
+ * Модуль шрифтов.
+ * Содержит определения битовых масок сегментов для символов и цифр.
  */
+
+/* Глобальный массив масок сегментов для цифр 0-9. */
 extern const vfd_seg_t g_display_font_digits[10];
 
 /*
- * Хелпер для цифр (инлайн, чтобы было быстро)
+ * Получение маски сегментов для цифры (0-9).
+ * Возвращает 0 (пустоту), если значение выходит за пределы диапазона.
  */
 static inline vfd_seg_t display_font_digit(uint8_t d)
 {
-    // Если d > 9, возвращаем 0 (пустоту), или можно g_display_font_digits[0]
     if (d < 10) return g_display_font_digits[d];
-    return 0; // Возвращаем пустоту для безопасности
+    return 0;
 }
 
-/*
- * Получить маску сегментов для символа ASCII (буквы, цифры, знаки)
- * Реализация в display_font.c
- */
+/* Получение маски сегментов для символа ASCII (A-Z, 0-9, спецсимволы). */
 vfd_seg_t display_font_get_char(char c);
 
 #ifdef __cplusplus

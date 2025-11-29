@@ -1,36 +1,44 @@
-// display_fx.c
 #include "display_api.h"
 #include "display_ll.h"
 #include "display_state.h"
 #include "display_rng.h"
 #include "display_lut.h" 
+#include "display_font.h"
 #include "logging.h"
-#include "pico/stdlib.h"
 
-#include "display_font.h" // Обязательно для display_font_get_char
+#include "pico/stdlib.h"
 #include <string.h>
 
-
+/*
+ * FX Engine.
+ * Модуль реализации процедурных анимаций.
+ * Управляет изменением яркости и содержимого буферов во времени.
+ */
 
 static bool s_rng_seeded = false;
 
 // ============================================================================
-//   HELPERS
+//   ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
 // ============================================================================
 
+/* Расчет времени, прошедшего с момента start (в миллисекундах). */
 static inline uint32_t fx_elapsed_ms(absolute_time_t from, absolute_time_t to) {
     int64_t diff_us = absolute_time_diff_us(from, to);
     if (diff_us <= 0) return 0;
     return (uint32_t)(diff_us / 1000u);
 }
 
+/* Инициализация генератора случайных чисел (если еще не выполнена). */
 static void fx_seed_rng_if_needed(void) {
     if (s_rng_seeded) return;
     display_rng_seed_from_adc((uint16_t)g_display->adc_pin);
     s_rng_seeded = true;
 }
 
-// Проверяет, "портит" ли эффект сегменты (true) или только яркость (false)
+/*
+ * Определение типа эффекта.
+ * Возвращает true, если эффект требует эксклюзивного контроля над сегментами.
+ */
 static bool fx_is_blocking_type(fx_type_t type) {
     switch (type) {
         case FX_GLITCH:
@@ -40,18 +48,22 @@ static bool fx_is_blocking_type(fx_type_t type) {
         case FX_SLIDE_IN:
             return true;
         default: 
-            return false;
+            return false; // Прозрачные эффекты (яркость)
     }
 }
+
+/*
+ * Завершение эффекта.
+ * Восстанавливает состояние дисплея (яркость и/или контент) из Snapshot.
+ */
 static void fx_finish_internal(void)
 {
     if (!g_display->fx_active) return;
     fx_type_t finished_type = g_display->fx_type;
     bool was_blocking = fx_is_blocking_type(finished_type);
 
-    // FIX: Если эффект был блокирующим (Glitch), восстанавливаем всё.
-    // Если прозрачным (Pulse), восстанавливаем только яркость, время оставляем текущее!
     if (was_blocking && g_display->saved_valid) {
+        // Для блокирующих эффектов: полное восстановление контента и яркости
         uint8_t digits = g_display->digit_count;
         for (uint8_t i = 0; i < digits; i++) {
             display_ll_set_digit_raw(i, g_display->saved_content_buffer[i]);
@@ -59,7 +71,7 @@ static void fx_finish_internal(void)
             g_display->final_brightness[i] = g_display->saved_brightness[i];
         }
     } else {
-        // Восстанавливаем базовую яркость
+        // Для прозрачных эффектов: восстановление только базовой яркости
         uint8_t restore_level = g_display->fx_base_brightness;
         if (g_display->saved_valid) restore_level = g_display->saved_brightness[0];
         
@@ -75,6 +87,10 @@ static void fx_finish_internal(void)
     if (g_display->on_effect_finished) g_display->on_effect_finished(finished_type);
 }
 
+/*
+ * Базовая инициализация любого эффекта.
+ * Создает Snapshot текущего состояния и настраивает таймеры.
+ */
 static bool fx_start_basic(fx_type_t type, uint32_t duration_ms, uint32_t frame_ms)
 {
     if (!g_display->initialized) return false;
@@ -84,7 +100,7 @@ static bool fx_start_basic(fx_type_t type, uint32_t duration_ms, uint32_t frame_
 
     fx_seed_rng_if_needed();
 
-    // Snapshot
+    // Создание снимка состояния (Snapshot)
     uint8_t digits = g_display->digit_count;
     for (uint8_t i = 0; i < digits; i++) {
         g_display->saved_content_buffer[i] = g_display->content_buffer[i];
@@ -103,7 +119,7 @@ static bool fx_start_basic(fx_type_t type, uint32_t duration_ms, uint32_t frame_
     if (base == 0) base = VFD_MAX_BRIGHTNESS;
     g_display->fx_base_brightness = base;
 
-    // Reset specific states
+    // Сброс внутренних счетчиков
     g_display->fx_glitch_active = false;
     g_display->fx_matrix_last_ms = 0;
     g_display->fx_morph_step = 0;
@@ -111,10 +127,23 @@ static bool fx_start_basic(fx_type_t type, uint32_t duration_ms, uint32_t frame_
     return true;
 }
 
+/* Подготовка текстового буфера для эффектов Marquee/SlideIn. */
+static void fx_prepare_text(const char *text) {
+    if (!text) return;
+    uint16_t len = 0;
+    while (text[len] && len < (FX_TEXT_MAX_LEN - 1)) {
+        g_display->fx_text_buffer[len] = text[len];
+        len++;
+    }
+    g_display->fx_text_buffer[len] = '\0';
+    g_display->fx_text_len = len;
+}
+
 // ============================================================================
-//   FX IMPLEMENTATIONS
+//   РЕАЛИЗАЦИЯ ЭФФЕКТОВ
 // ============================================================================
 
+/* Fade In / Fade Out: Линейное изменение яркости с гамма-коррекцией. */
 static void fx_apply_fade(uint32_t t_ms, uint32_t duration_ms, bool reverse) {
     if (duration_ms == 0) return;
     if (t_ms > duration_ms) t_ms = duration_ms;
@@ -126,6 +155,7 @@ static void fx_apply_fade(uint32_t t_ms, uint32_t duration_ms, bool reverse) {
     display_ll_set_brightness_all(display_ll_apply_gamma(linear));
 }
 
+/* Pulse: Синусоидальная модуляция яркости (дыхание). */
 static void fx_apply_pulse(uint32_t t_ms, uint32_t duration_ms) {
     if (duration_ms == 0) return;
     uint8_t base = g_display->fx_base_brightness;
@@ -133,7 +163,7 @@ static void fx_apply_pulse(uint32_t t_ms, uint32_t duration_ms) {
     const uint8_t span_percent = 100u - min_percent;
     const uint32_t cycles = 2;
     if (t_ms > duration_ms) t_ms = duration_ms;
-    // (uint64_t) cast for safety
+    
     uint32_t phase_full = (uint32_t)((uint64_t)t_ms * 256u * cycles / duration_ms);
     uint8_t phase_idx = (uint8_t)(phase_full & 0xFFu);
     uint8_t cos_q = display_cos_lut[phase_idx];
@@ -143,12 +173,14 @@ static void fx_apply_pulse(uint32_t t_ms, uint32_t duration_ms) {
     display_ll_set_brightness_all(display_ll_apply_gamma(linear));
 }
 
+/* Вспомогательная кривая затухания для эффекта Wave. */
 static uint8_t fx_ease_curve(uint32_t dist_ratio) {
     if (dist_ratio >= 255) return 0;
     uint32_t x = 255 - dist_ratio;
     return (uint8_t)((x * x) >> 8);
 }
 
+/* Wave: Волна яркости, бегущая по разрядам. */
 static void fx_apply_wave(uint32_t t_ms, uint32_t duration_ms) {
     if (duration_ms == 0) return;
     uint8_t digits = g_display->digit_count;
@@ -178,6 +210,7 @@ static void fx_apply_wave(uint32_t t_ms, uint32_t duration_ms) {
     }
 }
 
+/* Glitch: Случайная подмена битов в случайном разряде. */
 static void fx_apply_glitch(uint32_t elapsed_ms) {
     uint8_t digits = g_display->digit_count;
     if (!g_display->fx_glitch_active) {
@@ -219,74 +252,50 @@ static void fx_apply_glitch(uint32_t elapsed_ms) {
     }
 }
 
-/* 
- * Бывший "Matrix", теперь "Larson Scanner" (KITT).
- * Бегающий огонек с затухающим шлейфом.
- * Выглядит на VFD просто эпично.
- */
+/* Scanner (Matrix): Эффект бегущего огня (KITT) с затуханием. */
 static void fx_apply_matrix(uint32_t elapsed_ms) 
 {
-    // Параметры
     uint32_t duration_ms = g_display->fx_duration_ms;
     if (duration_ms == 0) return;
 
     uint8_t digits = g_display->digit_count;
-    uint8_t base = g_display->fx_base_brightness; // Максимальная яркость пятна
+    uint8_t base = g_display->fx_base_brightness;
 
-    // Скорость: один проход туда-обратно за "period" мс
-    // Чем меньше число, тем быстрее бегает
     uint32_t period = 1200; 
-
-    // Вычисляем фазу движения (0..period)
     uint32_t phase = elapsed_ms % period;
-
-    // Вычисляем позицию "головы" (плавающее число от 0.0 до digits-1.0)
-    // Мы используем fixed-point математику (умножаем на 100 для точности)
     
     int32_t head_pos_x100;
     
-    // Половина времени едем вправо, половина влево
     if (phase < (period / 2)) {
-        // Едем 0 -> N
         head_pos_x100 = (int32_t)(phase * (digits - 1) * 100) / (period / 2);
     } else {
-        // Едем N -> 0
         uint32_t phase_back = phase - (period / 2);
         head_pos_x100 = (int32_t)((digits - 1) * 100) - 
                         (int32_t)(phase_back * (digits - 1) * 100) / (period / 2);
     }
 
-    // Ширина шлейфа (чем больше, тем шире пятно)
-    // 150 = 1.5 разряда
     const int32_t width_x100 = 120; 
 
     for (uint8_t i = 0; i < digits; i++) {
         int32_t my_pos_x100 = i * 100;
-        
-        // Расстояние от этого разряда до "головы"
         int32_t dist = my_pos_x100 - head_pos_x100;
-        if (dist < 0) dist = -dist; // модуль
+        if (dist < 0) dist = -dist;
 
-        uint8_t target_brightness = 5; // Минимальная яркость фона (чтобы цифры читались)
+        uint8_t target_brightness = 5; 
 
         if (dist < width_x100) {
-            // Мы внутри пятна! Считаем яркость
-            // Формула: (1 - dist/width) * 100%
-            int32_t intensity = ((width_x100 - dist) * 100) / width_x100; // 0..100
-            
-            // Добавляем к минимуму
+            int32_t intensity = ((width_x100 - dist) * 100) / width_x100;
             int32_t level = 5 + intensity; 
             if (level > 100) level = 100;
-            
             target_brightness = (uint8_t)level;
         }
 
-        // Применяем гамму и базу
         uint32_t final_val = (uint32_t)base * target_brightness / 100u;
         display_ll_set_brightness(i, display_ll_apply_gamma((uint8_t)final_val));
     }
 }
 
+/* Morph: Побитовое превращение одного буфера в другой. */
 static void fx_apply_morph(uint32_t elapsed_ms, uint32_t duration_ms) {
     uint32_t steps = g_display->fx_morph_steps;
     if (steps == 0) return;
@@ -302,7 +311,7 @@ static void fx_apply_morph(uint32_t elapsed_ms, uint32_t duration_ms) {
     for (uint8_t d = 0; d < digits; d++) {
         vfd_seg_t from = g_display->fx_morph_start[d];
         vfd_seg_t to = g_display->fx_morph_target[d];
-        vfd_seg_t result = from & to; // start with common bits
+        vfd_seg_t result = from & to; 
 
         for (uint8_t b = 0; b < 8u; b++) {
             vfd_seg_t mask = (1u << b);
@@ -315,6 +324,7 @@ static void fx_apply_morph(uint32_t elapsed_ms, uint32_t duration_ms) {
     }
 }
 
+/* Dissolve: Случайное выключение сегментов до полного гашения. */
 static void fx_apply_dissolve(uint32_t elapsed_ms, uint32_t duration_ms) {
     uint32_t total = g_display->fx_dissolve_total_bits;
     if (total == 0) return;
@@ -334,109 +344,48 @@ static void fx_apply_dissolve(uint32_t elapsed_ms, uint32_t duration_ms) {
     for(int i=0; i<digits; i++) display_ll_set_digit_raw(i, segs[i]);
 }
 
-
-/* ============================================================================
- *   MARQUEE (Бегущая строка)
- *   Текст бежит справа налево, полностью уходя за экран.
- * ========================================================================== */
+/* Marquee: Бегущая строка (справа налево). */
 static void fx_apply_marquee(uint32_t elapsed_ms) {
     uint8_t digits = g_display->digit_count;
-    uint32_t speed = g_display->fx_frame_ms; // тут храним скорость
+    uint32_t speed = g_display->fx_frame_ms;
     if (speed == 0) speed = 200;
 
-    // Шаг анимации (смещение в символах)
     uint32_t step = elapsed_ms / speed;
-
-    // Полный путь: 
-    // Сначала пустой экран (digits пробелов) -> Текст выезжает -> Текст уезжает (digits пробелов)
-    // Но обычно marquee начинают сразу с выезда.
-    // Сделаем классику: [    ] -> [   H] -> [  HE] ... -> [LO  ] -> [O   ] -> [    ]
-    
     int total_len = g_display->fx_text_len + digits;
     
     if (step >= total_len) {
-        // Эффект закончился. Можно либо остановить, либо зациклить.
-        // Пока просто гасим экран (или вызываем финиш, если бы могли отсюда)
-        // Но fx_tick сам вызовет финиш по duration.
-        // Поэтому здесь просто рисуем пустоту.
         for(int i=0; i<digits; i++) display_ll_set_digit_raw(i, 0);
         return;
     }
 
-    // Рендеринг окна
     for (uint8_t i = 0; i < digits; i++) {
-        // Индекс символа в строке, который должен быть на позиции i дисплея
-        // Логика: 
-        // step 0: на экране ничего (или начало, если упростить).
-        // Давайте сделаем "мягкий вход":
-        // Экранный индекс i (0..3).
-        // Сдвиг строки = step.
-        // Символ = text[step - digits + i] ? 
-        // Проще: Представим виртуальную ленту: [пробелы_экрана][текст]
-        // Мы смотрим на ленту начиная с индекса `step`.
-        
-        // Виртуальный индекс в строке
         int char_idx = (int)step - (int)digits + 1 + i;
-
         vfd_seg_t seg = 0;
         if (char_idx >= 0 && char_idx < g_display->fx_text_len) {
             seg = display_font_get_char(g_display->fx_text_buffer[char_idx]);
         }
-        
         display_ll_set_digit_raw(i, seg);
     }
 }
 
-/* ============================================================================
- *   SLIDE IN (Заезд текста)
- *   Текст выезжает справа и встает как вкопанный.
- * ========================================================================== */
+/* Slide In: Выезд текста справа с фиксацией. */
 static void fx_apply_slide_in(uint32_t elapsed_ms) {
     uint8_t digits = g_display->digit_count;
     uint32_t speed = g_display->fx_frame_ms;
     if (speed == 0) speed = 150;
 
     uint32_t step = elapsed_ms / speed;
-    
-    // Максимальный шаг = digits (полностью выехал)
     if (step > digits) step = digits;
 
-    // Текст должен "прилипнуть" к правому краю при выезде, или левому?
-    // Обычно Slide In заполняет экран.
-    // Если step=1: [   H]
-    // Если step=2: [  HE]
-    // Если step=4: [HELL]
-    
-    // Сдвиг (сколько символов уже видно)
-    uint8_t visible_chars = (uint8_t)step;
-
     for (uint8_t i = 0; i < digits; i++) {
-        // Мы заполняем экран справа налево или слева направо?
-        // Slide In Right: символы сдвигаются влево.
-        
-        // Позиция i на экране.
-        // Нам нужно отобразить последние `digits` символов буфера?
-        // Или первые `digits`? Обычно первые.
-        
-        // Индекс в строке. 
-        // Когда step=digits (финал), на i=0 должен быть char=0.
-        // Значит формула: char_idx = i. 
-        // Но мы сдвигаем.
-        // Смещение = digits - step.
-        // char_idx = i - (digits - step).
-        
         int char_idx = (int)i - (int)(digits - step);
-        
         vfd_seg_t seg = 0;
         if (char_idx >= 0 && char_idx < g_display->fx_text_len) {
             seg = display_font_get_char(g_display->fx_text_buffer[char_idx]);
         }
-        
         display_ll_set_digit_raw(i, seg);
     }
 }
-
-
 
 // ============================================================================
 //   PUBLIC API
@@ -448,11 +397,9 @@ bool display_fx_pulse(uint32_t duration_ms) { return fx_start_basic(FX_PULSE, du
 bool display_fx_wave(uint32_t duration_ms) { return fx_start_basic(FX_WAVE, duration_ms, 0); }
 bool display_fx_glitch(uint32_t duration_ms) { return fx_start_basic(FX_GLITCH, duration_ms, 30); }
 
+/* Эффект Matrix заменен на Scanner (KITT), но имя API сохранено для совместимости. */
 bool display_fx_matrix(uint32_t duration_ms, uint32_t frame_ms) {
     if (!fx_start_basic(FX_MATRIX, duration_ms, frame_ms ? frame_ms : 80)) return false;
-    g_display->fx_matrix_total_steps = duration_ms / (frame_ms ? frame_ms : 80);
-    g_display->fx_matrix_min_percent = 20; 
-    for(int i=0; i<VFD_MAX_DIGITS; i++) g_display->fx_matrix_brightness_percent[i] = 100;
     return true;
 }
 
@@ -473,7 +420,8 @@ bool display_fx_dissolve(uint32_t duration_ms) {
     if (!fx_start_basic(FX_DISSOLVE, duration_ms, duration_ms/total)) return false;
     g_display->fx_dissolve_total_bits = total;
     for(uint32_t i=0; i<total; i++) g_display->fx_dissolve_order[i] = i;
-    // Shuffle
+    
+    // Перемешивание порядка сегментов
     for(uint32_t i=total-1; i>0; i--) {
         uint32_t j = display_rng_range(i+1);
         uint8_t t = g_display->fx_dissolve_order[i];
@@ -483,11 +431,34 @@ bool display_fx_dissolve(uint32_t duration_ms) {
     return true;
 }
 
+bool display_fx_marquee(const char *text, uint32_t speed_ms) {
+    if (!text) return false;
+    uint16_t len = strlen(text);
+    if (len == 0) return false;
+    
+    uint32_t total_steps = len + g_display->digit_count; 
+    uint32_t duration = total_steps * speed_ms;
+
+    if (!fx_start_basic(FX_MARQUEE, duration + speed_ms, speed_ms)) return false;
+    fx_prepare_text(text);
+    return true;
+}
+
+bool display_fx_slide_in(const char *text, uint32_t speed_ms) {
+    if (!text) return false;
+    uint32_t duration = g_display->digit_count * speed_ms;
+
+    if (!fx_start_basic(FX_SLIDE_IN, duration + speed_ms, speed_ms)) return false;
+    fx_prepare_text(text);
+    return true;
+}
+
 void display_fx_stop(void) {
     if (!g_display->fx_active) return;
     fx_finish_internal();
 }
 
+/* Главный тик анимации. Вызывается из display_core. */
 void display_fx_tick(void) {
     if (!g_display->fx_active) return;
     
@@ -509,51 +480,10 @@ void display_fx_tick(void) {
         case FX_MATRIX:   fx_apply_matrix(elapsed_ms); break;
         case FX_MORPH:    fx_apply_morph(elapsed_ms, g_display->fx_duration_ms); break;
         case FX_DISSOLVE: fx_apply_dissolve(elapsed_ms, g_display->fx_duration_ms); break;
-        case FX_MARQUEE: fx_apply_marquee(elapsed_ms); break;
+        case FX_MARQUEE:  fx_apply_marquee(elapsed_ms); break;
         case FX_SLIDE_IN: fx_apply_slide_in(elapsed_ms); break;
         default: fx_finish_internal(); break;
     }
 }
 
 bool display_fx_is_running(void) { return g_display->fx_active; }
-
-
-static void fx_prepare_text(const char *text) {
-    if (!text) return;
-    // Копируем текст в буфер
-    uint16_t len = 0;
-    while (text[len] && len < (FX_TEXT_MAX_LEN - 1)) {
-        g_display->fx_text_buffer[len] = text[len];
-        len++;
-    }
-    g_display->fx_text_buffer[len] = '\0';
-    g_display->fx_text_len = len;
-}
-
-bool display_fx_marquee(const char *text, uint32_t speed_ms) {
-    if (!text) return false;
-    uint16_t len = strlen(text);
-    if (len == 0) return false;
-    
-    // Длительность = (длина текста + ширина экрана) * скорость
-    uint32_t total_steps = len + g_display->digit_count; 
-    uint32_t duration = total_steps * speed_ms;
-
-    // Запас времени +1 шаг
-    if (!fx_start_basic(FX_MARQUEE, duration + speed_ms, speed_ms)) return false;
-    
-    fx_prepare_text(text);
-    return true;
-}
-
-bool display_fx_slide_in(const char *text, uint32_t speed_ms) {
-    if (!text) return false;
-    
-    // Длительность = ширина экрана * скорость
-    uint32_t duration = g_display->digit_count * speed_ms;
-
-    if (!fx_start_basic(FX_SLIDE_IN, duration + speed_ms, speed_ms)) return false;
-    
-    fx_prepare_text(text);
-    return true;
-}

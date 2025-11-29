@@ -2,7 +2,7 @@
 #include <ctype.h>
 
 /*
- * Твоя таблица цифр (Pin Mapping из твоего проекта)
+ *  Таблица Символов (Pin Mapping)
  * 
  * Bit 6 = A, Bit 5 = F, Bit 4 = E, Bit 3 = D, 
  * Bit 2 = G, Bit 1 = B, Bit 0 = C, Bit 7 = DP

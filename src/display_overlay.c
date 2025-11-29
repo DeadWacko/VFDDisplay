@@ -7,7 +7,7 @@
 #include <stdint.h>
 
 /*
- * OVERLAY LAYER
+ * OVERLAY LAYER # СЕЙЧАС НЕ ИСПОЛЬЗУЕТСЯ НИГДЕ. 
  * -------------
  * Перенос boot / WiFi / NTP оверлеев из легаси в отдельный модуль HL.
  *

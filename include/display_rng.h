@@ -9,20 +9,22 @@ extern "C" {
 #endif
 
 /*
- * Immortal HL RNG — XORSHIFT32
- * ----------------------------
- * - deterministic
- * - fast
- * - 32-bit period (~4e9)
- * - no malloc, no float, no libc rand()
- *
- * Used only for FX-layer (glitch, dissolve, matrix, etc.)
+ * Модуль генерации псевдослучайных чисел.
+ * Реализует алгоритм Xorshift32. Используется для визуальных эффектов
+ * (Glitch, Dissolve, Matrix), не требуя использования стандартной библиотеки rand().
  */
 
-void     display_rng_seed(uint32_t seed);
-void     display_rng_seed_from_adc(uint16_t adc_pin);
+/* Инициализация генератора заданным значением (seed). */
+void display_rng_seed(uint32_t seed);
+
+/* Инициализация генератора случайным шумом с указанного вывода АЦП. */
+void display_rng_seed_from_adc(uint16_t adc_pin);
+
+/* Получение следующего 32-битного псевдослучайного числа. */
 uint32_t display_rng_next(void);
-uint32_t display_rng_range(uint32_t limit);   // returns [0 .. limit-1]
+
+/* Получение псевдослучайного числа в диапазоне [0 .. limit-1]. */
+uint32_t display_rng_range(uint32_t limit);
 
 #ifdef __cplusplus
 }
