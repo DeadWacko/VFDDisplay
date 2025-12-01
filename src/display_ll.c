@@ -163,6 +163,10 @@ static bool ll_fast_timer_cb(struct repeating_timer *t)
     }
     else if (pwm < 255)
     {
+        if (s_ll.clear_alarm >= 0) {
+            cancel_alarm(s_ll.clear_alarm);
+            s_ll.clear_alarm = -1;
+        }
         // Расчет времени включения
         uint32_t on_us = (uint32_t)pwm * s_ll.slot_period_us / 255u;
         
@@ -183,7 +187,7 @@ static bool ll_fast_timer_cb(struct repeating_timer *t)
             ll_shift_out(0x00);
             ll_shift_out(0x00);
             ll_latch();
-            s_ll.clear_alarm = 0;
+            s_ll.clear_alarm = -1;
         }
     }
     else
@@ -252,6 +256,7 @@ bool display_ll_init(const display_ll_config_t *cfg)
         s_ll.brightness[i] = 255;
     }
 
+    s_ll.clear_alarm = -1;
     s_ll.initialized = true;
     return true;
 }
@@ -272,7 +277,7 @@ bool display_ll_start_refresh(void)
 
     s_ll.slot_period_us = (uint32_t)(-period_us);
     s_ll.current_digit  = 0;
-    s_ll.clear_alarm    = 0;
+    s_ll.clear_alarm    = -1;
     s_ll.refresh_running = true;
 
     if (!add_repeating_timer_us(period_us, ll_fast_timer_cb, NULL, &s_ll.fast_timer)) {
@@ -287,6 +292,11 @@ void display_ll_stop_refresh(void)
     if (!s_ll.initialized || !s_ll.refresh_running) return;
     
     cancel_repeating_timer(&s_ll.fast_timer);
+    
+    if (s_ll.clear_alarm >= 0) {
+        cancel_alarm(s_ll.clear_alarm);
+        s_ll.clear_alarm = -1;
+    }
     
     // Гашение дисплея
     ll_shift_out(0x00);
@@ -308,6 +318,7 @@ void display_ll_deinit(void)
     gpio_set_dir(s_ll.latch_pin, GPIO_IN);
     
     memset(&s_ll, 0, sizeof(s_ll));
+    s_ll.clear_alarm = -1;
 }
 
 // ============================================================================

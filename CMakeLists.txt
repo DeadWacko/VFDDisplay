@@ -84,3 +84,18 @@ add_subdirectory(examples/ll_test)
 add_subdirectory(examples/clock_ll_basic) # <--- ДОБАВИТЬ ЭТУ СТРОКУ
 add_subdirectory(examples/clock_hl_basic)
 add_subdirectory(examples/hl_full_test)
+
+# Test for Issue 13: clear alarm cancellation
+add_executable(test_issue_13_clear_alarm
+    examples/tests/test_issue_13_clear_alarm.c
+)
+pico_enable_stdio_usb(test_issue_13_clear_alarm 1)
+pico_enable_stdio_uart(test_issue_13_clear_alarm 0)
+target_link_libraries(test_issue_13_clear_alarm
+    PRIVATE
+        vfd_display
+        pico_stdlib
+        hardware_timer
+        hardware_gpio
+)
+pico_add_extra_outputs(test_issue_13_clear_alarm)
