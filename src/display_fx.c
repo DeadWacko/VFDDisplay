@@ -270,6 +270,9 @@ static void fx_apply_glitch(uint32_t elapsed_ms) {
 }
 
 /* Scanner (Matrix): Эффект бегущего огня (KITT) с затуханием. */
+/* 
+ * FIX #17: Использование fx_frame_ms как периода эффекта. 
+ */
 static void fx_apply_matrix(uint32_t elapsed_ms) 
 {
     uint32_t duration_ms = g_display->fx_duration_ms;
@@ -278,7 +281,10 @@ static void fx_apply_matrix(uint32_t elapsed_ms)
     uint8_t digits = g_display->digit_count;
     uint8_t base = g_display->fx_base_brightness;
 
-    uint32_t period = 1200; 
+    // Period теперь берется из настроек, а не хардкодится.
+    uint32_t period = g_display->fx_frame_ms;
+    if (period == 0) period = 1200; 
+
     uint32_t phase = elapsed_ms % period;
     
     int32_t head_pos_x100;
@@ -414,9 +420,13 @@ bool display_fx_pulse(uint32_t duration_ms) { return fx_start_basic(FX_PULSE, du
 bool display_fx_wave(uint32_t duration_ms) { return fx_start_basic(FX_WAVE, duration_ms, 0); }
 bool display_fx_glitch(uint32_t duration_ms) { return fx_start_basic(FX_GLITCH, duration_ms, 30); }
 
-/* Эффект Matrix заменен на Scanner (KITT), но имя API сохранено для совместимости. */
+/* Эффект Matrix заменен на Scanner (KITT), но имя API сохранено для совместимости. 
+ *
+ * FIX #17: Поменяли дефолтное значение frame_ms с 80 на 1200.
+ * Теперь frame_ms трактуется как ПЕРИОД эффекта.
+ */
 bool display_fx_matrix(uint32_t duration_ms, uint32_t frame_ms) {
-    if (!fx_start_basic(FX_MATRIX, duration_ms, frame_ms ? frame_ms : 80)) return false;
+    if (!fx_start_basic(FX_MATRIX, duration_ms, frame_ms ? frame_ms : 1200)) return false;
     return true;
 }
 
