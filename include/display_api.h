@@ -37,7 +37,7 @@ void display_show_time(uint8_t hours, uint8_t minutes, bool show_colon);
 void display_show_date(uint8_t day, uint8_t month);
 
 /* Получение указателя на текущий буфер контента. */
-vfd_seg_t *display_content_buffer(void);
+vfd_segment_map_t *display_content_buffer(void);
 
 /* =====================
  *  ТЕКСТОВЫЕ ЭФФЕКТЫ
@@ -75,7 +75,7 @@ void display_fx_tick(void);
 bool display_fx_matrix(uint32_t duration_ms, uint32_t frame_ms);
 
 /* Запуск эффекта морфинга (плавное превращение). */
-bool display_fx_morph(uint32_t duration_ms, const vfd_seg_t *target, uint32_t steps);
+bool display_fx_morph(uint32_t duration_ms, const vfd_segment_map_t *target, uint32_t steps);
 
 /* Запуск эффекта рассыпания (Dissolve). */
 bool display_fx_dissolve(uint32_t duration_ms);

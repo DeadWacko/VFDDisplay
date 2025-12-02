@@ -11,7 +11,7 @@
  */
 
 /* Внешний интерфейс ядра для обновления буфера */
-extern void display_core_set_buffer(const vfd_seg_t *buf, uint8_t size);
+extern void display_core_set_buffer(const vfd_segment_map_t *buf, uint8_t size);
 
 /* Получение количества активных разрядов из драйвера нижнего уровня. */
 static uint8_t get_active_digits(void)
@@ -36,7 +36,7 @@ static uint8_t get_active_digits(void)
 void display_show_number(int32_t value)
 {
     uint8_t digits = get_active_digits();
-    vfd_seg_t buf[VFD_MAX_DIGITS];
+    vfd_segment_map_t buf[VFD_MAX_DIGITS];
     memset(buf, 0, sizeof(buf));
 
     bool negative = (value < 0);
@@ -82,7 +82,7 @@ void display_show_number(int32_t value)
 void display_show_time(uint8_t hours, uint8_t minutes, bool show_colon)
 {
     uint8_t digits = get_active_digits();
-    vfd_seg_t buf[VFD_MAX_DIGITS];
+    vfd_segment_map_t buf[VFD_MAX_DIGITS];
     memset(buf, 0, sizeof(buf));
 
     if (digits < 4) {
@@ -115,7 +115,7 @@ void display_show_time(uint8_t hours, uint8_t minutes, bool show_colon)
 void display_show_date(uint8_t day, uint8_t month)
 {
     uint8_t digits = get_active_digits();
-    vfd_seg_t buf[VFD_MAX_DIGITS];
+    vfd_segment_map_t buf[VFD_MAX_DIGITS];
     memset(buf, 0, sizeof(buf));
 
     if (digits < 4) {
@@ -146,7 +146,7 @@ void display_show_date(uint8_t day, uint8_t month)
 void display_show_text(const char *text)
 {
     uint8_t digits = get_active_digits();
-    vfd_seg_t buf[VFD_MAX_DIGITS];
+    vfd_segment_map_t buf[VFD_MAX_DIGITS];
     memset(buf, 0, sizeof(buf));
 
     if (!text) {
@@ -160,7 +160,7 @@ void display_show_text(const char *text)
     // Посимвольный вывод слева направо
     while(text[str_idx] && buf_idx < digits) {
         char c = text[str_idx];
-        vfd_seg_t seg = display_font_get_char(c);
+        vfd_segment_map_t seg = display_font_get_char(c);
         
         // Проверка на следующую точку для слияния символов
         if (text[str_idx+1] == '.') {

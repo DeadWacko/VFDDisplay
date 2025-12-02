@@ -28,15 +28,15 @@ typedef enum {
 typedef enum {
     FX_NONE = 0,
     
-    // Прозрачные (Intensity Effects) - не блокируют контент
+    // Прозрачные (Intensity Effects)
     FX_FADE_IN,
     FX_FADE_OUT,
     FX_PULSE,
     FX_WAVE,
     FX_MATRIX,    // Scanner (KITT)
-    FX_HEARTBEAT, // New
+    FX_HEARTBEAT,
     
-    // Блокирующие (Structural Effects) - захватывают сегменты
+    // Блокирующие (Structural Effects)
     FX_GLITCH,
     FX_MORPH,
     FX_DISSOLVE,
@@ -60,35 +60,30 @@ typedef enum {
     OV_NTP,
 } overlay_type_t;
 
-#define FX_TEXT_MAX_LEN 64 // Макс. длина строки для Marquee/SlideIn
+#define FX_TEXT_MAX_LEN 64
 
 /* ============================================================================
    ГЛОБАЛЬНАЯ СТРУКТУРА СОСТОЯНИЯ
-   Хранит все параметры дисплея, буферы и состояние анимаций.
    ========================================================================== */
 
 typedef struct display_state_s {
 
     /* --- Статус --- */
-    volatile bool initialized;         // Флаг инициализации драйвера
-
-    /* --- Геометрия --- */
-    uint8_t  digit_count;              // Количество разрядов
-    uint16_t refresh_rate_hz;          // Частота обновления
-
-    /* --- Режим работы --- */
-    volatile display_mode_t mode;      // Content / Effect / Overlay
+    volatile bool initialized;
+    uint8_t  digit_count;
+    uint16_t refresh_rate_hz;
+    volatile display_mode_t mode;
 
     /* --- Буферы контента --- */
-    vfd_seg_t content_buffer[VFD_MAX_DIGITS];       // Основной буфер (Content)
-    uint8_t   content_brightness[VFD_MAX_DIGITS];   // Базовая яркость
+    vfd_segment_map_t content_buffer[VFD_MAX_DIGITS];       // Основной буфер
+    uint8_t           content_brightness[VFD_MAX_DIGITS];
 
-    /* --- Snapshot (Сохраненное состояние перед FX) --- */
-    vfd_seg_t saved_content_buffer[VFD_MAX_DIGITS];
-    uint8_t   saved_brightness[VFD_MAX_DIGITS];
-    bool      saved_valid;
+    /* --- Snapshot --- */
+    vfd_segment_map_t saved_content_buffer[VFD_MAX_DIGITS];
+    uint8_t           saved_brightness[VFD_MAX_DIGITS];
+    bool              saved_valid;
 
-    /* --- Финальный буфер (отправляется в LL) --- */
+    /* --- Финальный буфер --- */
     volatile uint8_t final_brightness[VFD_MAX_DIGITS];
 
     /* =========================================================================
@@ -107,46 +102,46 @@ typedef struct display_state_s {
 
     uint8_t         fx_base_brightness;
 
-    /* Параметры конкретных эффектов */
+    /* Параметры эффектов */
     
     // Glitch
-    bool            fx_glitch_active;
-    uint32_t        fx_glitch_last_ms;
-    uint32_t        fx_glitch_next_ms;
-    uint32_t        fx_glitch_step;
-    uint8_t         fx_glitch_digit;
-    uint8_t         fx_glitch_bit;
-    vfd_seg_t       fx_glitch_saved_digit;
+    bool              fx_glitch_active;
+    uint32_t          fx_glitch_last_ms;
+    uint32_t          fx_glitch_next_ms;
+    uint32_t          fx_glitch_step;
+    uint8_t           fx_glitch_digit;
+    uint8_t           fx_glitch_bit;
+    vfd_segment_map_t fx_glitch_saved_digit;
 
     // Matrix / Scanner
-    uint32_t        fx_matrix_last_ms;
-    uint32_t        fx_matrix_step;
-    uint32_t        fx_matrix_total_steps;
-    uint8_t         fx_matrix_min_percent;
-    uint8_t         fx_matrix_brightness_percent[VFD_MAX_DIGITS];
+    uint32_t          fx_matrix_last_ms;
+    uint32_t          fx_matrix_step;
+    uint32_t          fx_matrix_total_steps;
+    uint8_t           fx_matrix_min_percent;
+    uint8_t           fx_matrix_brightness_percent[VFD_MAX_DIGITS];
 
     // Morph
-    vfd_seg_t       fx_morph_start[VFD_MAX_DIGITS];
-    vfd_seg_t       fx_morph_target[VFD_MAX_DIGITS];
-    uint32_t        fx_morph_step;
-    uint32_t        fx_morph_steps;
+    vfd_segment_map_t fx_morph_start[VFD_MAX_DIGITS];
+    vfd_segment_map_t fx_morph_target[VFD_MAX_DIGITS];
+    uint32_t          fx_morph_step;
+    uint32_t          fx_morph_steps;
 
     // Dissolve
-    uint8_t         fx_dissolve_order[VFD_MAX_DIGITS * 8];
-    uint32_t        fx_dissolve_total_bits;
-    uint32_t        fx_dissolve_step;
+    uint8_t           fx_dissolve_order[VFD_MAX_DIGITS * 8];
+    uint32_t          fx_dissolve_total_bits;
+    uint32_t          fx_dissolve_step;
 
-    // Slot Machine / Decode / Target-based FX
-    vfd_seg_t       fx_target_buffer[VFD_MAX_DIGITS];
-    uint32_t        fx_stage_step;
+    // Slot Machine / Other
+    vfd_segment_map_t fx_target_buffer[VFD_MAX_DIGITS];
+    uint32_t          fx_stage_step;
 
     // Ping Pong
-    int32_t         fx_pingpong_pos;
-    bool            fx_pingpong_dir;
+    int32_t           fx_pingpong_pos;
+    bool              fx_pingpong_dir;
 
     // Text FX
-    char            fx_text_buffer[FX_TEXT_MAX_LEN];
-    uint16_t        fx_text_len;
+    char              fx_text_buffer[FX_TEXT_MAX_LEN];
+    uint16_t          fx_text_len;
 
     /* =========================================================================
        ДВИЖОК ОВЕРЛЕЕВ (OVERLAYS)
@@ -198,7 +193,6 @@ typedef struct display_state_s {
 
 } display_state_t;
 
-/* Глобальный указатель на экземпляр состояния (Singleton) */
 extern display_state_t *const g_display;
 
 #ifdef __cplusplus

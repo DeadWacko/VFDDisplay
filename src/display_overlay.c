@@ -32,7 +32,7 @@ static void ov_save_snapshot(void)
     // чтобы не потерять исходный контент.
     if (g_display->saved_valid) return;
 
-    vfd_seg_t *ll_buf = display_ll_get_buffer(); // Только чтение
+    vfd_segment_map_t *ll_buf = display_ll_get_buffer(); // Только чтение
     uint8_t digits = g_display->digit_count;
 
     for (uint8_t i = 0; i < digits; i++) {
@@ -149,7 +149,7 @@ void display_overlay_tick(void)
         }
 
         uint8_t d = (uint8_t)(g_display->ov_step % 10);
-        vfd_seg_t code = display_font_digit(d); // Используем безопасный геттер
+        vfd_segment_map_t code = display_font_digit(d); // Используем безопасный геттер
 
         for (uint8_t i = 0; i < digits; i++) {
             display_ll_set_digit_raw(i, code);
@@ -168,7 +168,7 @@ void display_overlay_tick(void)
         }
 
         bool on = ((g_display->ov_step & 1u) == 0);
-        vfd_seg_t code = on ? display_font_digit(8) : 0;
+        vfd_segment_map_t code = on ? display_font_digit(8) : 0;
 
         for (uint8_t i = 0; i < digits; i++) {
             display_ll_set_digit_raw(i, code);

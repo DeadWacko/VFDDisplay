@@ -18,7 +18,7 @@
  * Простая таблица сегментов (0-9) для 7-сегментного индикатора.
  * A=bit0, B=bit1, ..., G=bit6, DP=bit7
  */
-static const vfd_seg_t FONT_DIGITS[10] = {
+static const vfd_segment_map_t FONT_DIGITS[10] = {
     0b01111011, // 0
     0b00000011, // 1
     0b01011110, // 2
@@ -35,7 +35,7 @@ static const vfd_seg_t FONT_DIGITS[10] = {
 static void test_show_digit(uint8_t pos, uint8_t number)
 {
     if (number > 9) return;
-    vfd_seg_t segmask = FONT_DIGITS[number];
+    vfd_segment_map_t segmask = FONT_DIGITS[number];
     display_ll_set_digit_raw(pos, segmask);
 }
 

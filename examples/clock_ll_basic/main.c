@@ -15,7 +15,7 @@
 #define SEG_DP            0x80 
 
 /* Таблица сегментов (0-9) */
-static const vfd_seg_t FONT_DIGITS[10] = {
+static const vfd_segment_map_t FONT_DIGITS[10] = {
     0b01111011, // 0
     0b00000011, // 1
     0b01011110, // 2
@@ -29,7 +29,7 @@ static const vfd_seg_t FONT_DIGITS[10] = {
 };
 
 // Хелпер для получения маски цифры
-static vfd_seg_t get_digit_mask(uint8_t num) {
+static vfd_segment_map_t get_digit_mask(uint8_t num) {
     if (num > 9) return 0x00;
     return FONT_DIGITS[num];
 }
@@ -91,7 +91,7 @@ int main(void) {
         bool tick = (t.sec % 2) == 0;
         
         // Формируем маски для вывода
-        vfd_seg_t segs[4];
+        vfd_segment_map_t segs[4];
         
         // ВНИМАНИЕ: Порядок разрядов зависит от разводки платы.
         // Предполагаем: [0][1][2][3] -> H1 H0 M1 M0 (Слева направо)

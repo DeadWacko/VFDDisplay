@@ -179,7 +179,7 @@ void process_demo_sequence(void) {
                 
                 // Подготовка целевого буфера (слово "BYTE")
                 // Нам нужно "собрать" его вручную, чтобы передать в функцию morph
-                vfd_seg_t target[4];
+                vfd_segment_map_t target[4];
                 target[0] = display_font_get_char('B');
                 target[1] = display_font_get_char('Y');
                 target[2] = display_font_get_char('T');

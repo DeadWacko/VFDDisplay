@@ -237,7 +237,7 @@ static void fx_apply_glitch(uint32_t elapsed_ms) {
 
     if (d >= digits) { g_display->fx_glitch_active = false; return; }
 
-    vfd_seg_t seg = g_display->fx_glitch_saved_digit;
+    vfd_segment_map_t seg = g_display->fx_glitch_saved_digit;
     if (pattern[g_display->fx_glitch_step % pattern_len]) seg |= (1u << b);
     else seg &= ~(1u << b);
     
@@ -309,12 +309,12 @@ static void fx_apply_morph(uint32_t elapsed_ms, uint32_t duration_ms) {
     uint32_t threshold = (uint32_t)((uint64_t)step * 255u / steps);
 
     for (uint8_t d = 0; d < digits; d++) {
-        vfd_seg_t from = g_display->fx_morph_start[d];
-        vfd_seg_t to = g_display->fx_morph_target[d];
-        vfd_seg_t result = from & to; 
+        vfd_segment_map_t from = g_display->fx_morph_start[d];
+        vfd_segment_map_t to = g_display->fx_morph_target[d];
+        vfd_segment_map_t result = from & to; 
 
         for (uint8_t b = 0; b < 8u; b++) {
-            vfd_seg_t mask = (1u << b);
+            vfd_segment_map_t mask = (1u << b);
             if ((from & mask) == (to & mask)) continue;
             uint32_t weight = ((uint32_t)d * 8u + b) * 255u / total_pos;
             if (threshold >= weight) { if (to & mask) result |= mask; else result &= ~mask; }
@@ -333,7 +333,7 @@ static void fx_apply_dissolve(uint32_t elapsed_ms, uint32_t duration_ms) {
     if (step == g_display->fx_dissolve_step) return;
     g_display->fx_dissolve_step = step;
 
-    vfd_seg_t segs[VFD_MAX_DIGITS];
+    vfd_segment_map_t segs[VFD_MAX_DIGITS];
     uint8_t digits = g_display->digit_count;
     for(int i=0; i<digits; i++) segs[i] = g_display->content_buffer[i];
 
@@ -360,7 +360,7 @@ static void fx_apply_marquee(uint32_t elapsed_ms) {
 
     for (uint8_t i = 0; i < digits; i++) {
         int char_idx = (int)step - (int)digits + 1 + i;
-        vfd_seg_t seg = 0;
+        vfd_segment_map_t seg = 0;
         if (char_idx >= 0 && char_idx < g_display->fx_text_len) {
             seg = display_font_get_char(g_display->fx_text_buffer[char_idx]);
         }
@@ -379,7 +379,7 @@ static void fx_apply_slide_in(uint32_t elapsed_ms) {
 
     for (uint8_t i = 0; i < digits; i++) {
         int char_idx = (int)i - (int)(digits - step);
-        vfd_seg_t seg = 0;
+        vfd_segment_map_t seg = 0;
         if (char_idx >= 0 && char_idx < g_display->fx_text_len) {
             seg = display_font_get_char(g_display->fx_text_buffer[char_idx]);
         }
@@ -403,7 +403,7 @@ bool display_fx_matrix(uint32_t duration_ms, uint32_t frame_ms) {
     return true;
 }
 
-bool display_fx_morph(uint32_t duration_ms, const vfd_seg_t *target, uint32_t steps) {
+bool display_fx_morph(uint32_t duration_ms, const vfd_segment_map_t *target, uint32_t steps) {
     if (!target || steps==0) return false;
     if (!fx_start_basic(FX_MORPH, duration_ms, duration_ms/steps)) return false;
     g_display->fx_morph_steps = steps;

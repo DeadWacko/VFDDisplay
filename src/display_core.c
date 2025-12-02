@@ -13,11 +13,6 @@
 
 /*
  * High-Level Core.
- * Реализация центральной логики дисплея:
- * - Хранение глобального состояния.
- * - Управление приоритетами (Overlay -> Effect -> Content).
- * - Маршрутизация данных в драйвер низкого уровня (LL).
- * - Системные функции (автояркость, мигание точек).
  */
 
 static display_state_t g_display_state;
@@ -30,13 +25,11 @@ display_state_t *const g_display = &g_display_state;
 #define DISPLAY_DEFAULT_REFRESH_HZ    120
 #define DISPLAY_DEFAULT_ADC_PIN       26   
 
-/* Параметры автоматической яркости */
 #define DISPLAY_BRIGHTNESS_MIN_AUTO   5    
 #define DISPLAY_BRIGHTNESS_NIGHT      10   
 #define DISPLAY_BRIGHTNESS_UPDATE_MS  1000 
 #define DISPLAY_BRIGHTNESS_HYSTERESIS 2    
 
-/* Параметры мигания точек */
 #define DOT_DEFAULT_PERIOD_MS         1000 
 #define DOT_DEFAULT_BIT               7    
 #define DOT_DEFAULT_POS1              1    
@@ -46,11 +39,6 @@ display_state_t *const g_display = &g_display_state;
 //  Вспомогательные функции
 // ============================================================================
 
-/*
- * Проверка типа текущего эффекта.
- * Возвращает true, если эффект является блокирующим (захватывает управление сегментами).
- * Возвращает false, если эффект прозрачный (управляет только яркостью).
- */
 static bool core_is_fx_blocking(void)
 {
     if (!g_display->fx_active) return false;
@@ -83,17 +71,12 @@ static inline uint8_t clamp_u8(uint32_t v, uint8_t max_val)
     return (uint8_t)v;
 }
 
-/* Отправка глобального уровня яркости в драйвер LL. */
 static void core_push_brightness_to_ll(uint8_t level)
 {
     if (!display_ll_is_initialized()) return;
     display_ll_set_brightness_all(level);
 }
 
-/*
- * Слияние буфера контента с состоянием точек и отправка в LL.
- * Выполняется только если управление не захвачено блокирующим эффектом.
- */
 static void core_push_content_to_ll(void)
 {
     if (!display_ll_is_initialized() || !g_display->initialized) return;
@@ -102,13 +85,13 @@ static void core_push_content_to_ll(void)
     if (digits > VFD_MAX_DIGITS) digits = VFD_MAX_DIGITS;
 
     for (uint8_t i = 0; i < digits; i++) {
-        vfd_seg_t seg = g_display->content_buffer[i];
+        vfd_segment_map_t seg = g_display->content_buffer[i];
         
-        // Наложение маски разделительных точек (если включено)
+        // Наложение карты точек (если включено)
         if (g_display->dot_blink_enabled && g_display->dot_state) {
             for (uint8_t k = 0; k < 2; k++) {
                 if (g_display->dot_digit_positions[k] == i) {
-                    seg |= (vfd_seg_t)(1u << g_display->dot_bit);
+                    seg |= (vfd_segment_map_t)(1u << g_display->dot_bit);
                 }
             }
         }
@@ -116,7 +99,6 @@ static void core_push_content_to_ll(void)
     }
 }
 
-/* Чтение АЦП с усреднением для подавления шума. */
 static uint16_t core_read_adc_filtered(uint16_t adc_pin)
 {
     uint16_t input = 0;
@@ -128,20 +110,17 @@ static uint16_t core_read_adc_filtered(uint16_t adc_pin)
     return (uint16_t)(acc / samples);
 }
 
-/* Расчет и применение целевой яркости (Manual / Auto / Night). */
 static void core_update_brightness_now(void)
 {
     uint8_t new_level = g_display->user_brightness_level;
 
     if (g_display->auto_brightness_enabled) {
-        // Расчет по датчику освещенности
         uint16_t raw = core_read_adc_filtered((uint16_t)g_display->adc_pin); 
         uint32_t val = (uint32_t)raw * VFD_MAX_BRIGHTNESS;
         uint8_t level = (uint8_t)(val / 4095u);
         if (level < DISPLAY_BRIGHTNESS_MIN_AUTO) level = DISPLAY_BRIGHTNESS_MIN_AUTO;
         new_level = level;
     } else if (g_display->night_mode_enabled && rtc_running()) {
-        // Расчет по времени суток (RTC)
         datetime_t dt;
         rtc_get_datetime(&dt);
         bool is_night = false;
@@ -156,7 +135,6 @@ static void core_update_brightness_now(void)
 
     if (new_level > VFD_MAX_BRIGHTNESS) new_level = VFD_MAX_BRIGHTNESS;
 
-    // Применение с гистерезисом для предотвращения мерцания
     uint8_t current = g_display->final_brightness[0];
     uint8_t diff = (current > new_level) ? (current - new_level) : (new_level - current);
     if (diff < DISPLAY_BRIGHTNESS_HYSTERESIS) return;
@@ -165,12 +143,9 @@ static void core_update_brightness_now(void)
     core_push_brightness_to_ll(new_level);
 }
 
-/* Периодическое обновление яркости (Heartbeat). */
 static void core_brightness_tick(absolute_time_t now)
 {
-    // Блокировка автояркости во время активных анимаций
     if (g_display->fx_active || g_display->ov_active) return;
-
     if (!(g_display->auto_brightness_enabled || g_display->night_mode_enabled)) return;
 
     uint32_t now_ms  = to_ms_since_boot(now);
@@ -181,13 +156,10 @@ static void core_brightness_tick(absolute_time_t now)
     core_update_brightness_now();
 }
 
-/* Логика мигания разделительных точек. */
 static void core_dot_blink_tick(absolute_time_t now)
 {
     if (!g_display->dot_blink_enabled || g_display->digit_count == 0) return;
     if (g_display->ov_active) return;
-    
-    // Блокирующие эффекты перехватывают контроль над точками
     if (core_is_fx_blocking()) return;
 
     uint32_t now_ms  = to_ms_since_boot(now);
@@ -208,7 +180,6 @@ void display_init(uint8_t digit_count)
     if (digit_count == 0 || digit_count > VFD_MAX_DIGITS) digit_count = 4;
     memset(&g_display_state, 0, sizeof(g_display_state));
 
-    // Настройка состояния по умолчанию
     g_display->digit_count = digit_count;
     g_display->refresh_rate_hz = DISPLAY_DEFAULT_REFRESH_HZ;
     g_display->user_brightness_level = VFD_MAX_BRIGHTNESS;
@@ -229,7 +200,6 @@ void display_init(uint8_t digit_count)
         g_display->final_brightness[i] = VFD_MAX_BRIGHTNESS;
     }
 
-    // Инициализация драйвера низкого уровня
     display_ll_config_t cfg = {
         .data_pin = DISPLAY_DEFAULT_DATA_PIN,
         .clock_pin = DISPLAY_DEFAULT_CLOCK_PIN,
@@ -244,7 +214,6 @@ void display_init(uint8_t digit_count)
     }
     display_ll_start_refresh();
 
-    // Инициализация периферии
     adc_init();
     adc_gpio_init((uint)g_display->adc_pin);
     if (g_display->adc_pin >= 26 && g_display->adc_pin <= 29) {
@@ -273,7 +242,6 @@ void display_set_brightness(uint8_t brightness)
     if (brightness > VFD_MAX_BRIGHTNESS) brightness = VFD_MAX_BRIGHTNESS;
     g_display->user_brightness_level = brightness;
     
-    // Мгновенное применение, если не активны автоматические режимы или эффекты
     if (!g_display->auto_brightness_enabled && !g_display->night_mode_enabled && !g_display->fx_active) {
         for (uint8_t i = 0; i < g_display->digit_count; i++) 
             g_display->final_brightness[i] = brightness;
@@ -302,17 +270,15 @@ void display_set_dot_blinking(bool enable) {
     if (!enable) core_push_content_to_ll();
 }
 
-void display_core_set_buffer(const vfd_seg_t *buf, uint8_t size)
+void display_core_set_buffer(const vfd_segment_map_t *buf, uint8_t size)
 {
     if (!g_display->initialized || !buf) return;
 
     uint8_t n = size > g_display->digit_count ? g_display->digit_count : size;
     
-    // Копирование данных в основной буфер
     for (uint8_t i = 0; i < n; i++) g_display->content_buffer[i] = buf[i];
     for (uint8_t i = n; i < g_display->digit_count; i++) g_display->content_buffer[i] = 0;
 
-    // Обновление дисплея, если не активны оверлеи или блокирующие эффекты
     if (!display_is_overlay_running()) {
         if (!core_is_fx_blocking()) {
             core_push_content_to_ll();
@@ -320,24 +286,18 @@ void display_core_set_buffer(const vfd_seg_t *buf, uint8_t size)
     }
 }
 
-vfd_seg_t *display_content_buffer(void) { return g_display->content_buffer; }
+vfd_segment_map_t *display_content_buffer(void) { return g_display->content_buffer; }
 
 extern void display_fx_tick(void);
 extern void display_overlay_tick(void);
 
-/*
- * Главный цикл обработки.
- * Управляет жизненным циклом кадров, эффектов и приоритетами.
- */
 void display_process(void)
 {
     if (!g_display->initialized) return;
     absolute_time_t now = get_absolute_time();
 
-    // 1. Автоматическое управление яркостью (если нет эффектов)
     core_brightness_tick(now);
 
-    // 2. Обработка оверлеев (Высший приоритет)
     if (display_is_overlay_running()) {
         g_display->ov_active = true;
         g_display->fx_active = false;
@@ -348,24 +308,20 @@ void display_process(void)
         g_display->ov_active = false;
     }
 
-    // 3. Обработка эффектов
     if (display_fx_is_running()) {
         g_display->fx_active = true;
         display_fx_tick();
         
-        // Если эффект блокирующий (структурный), прерываем обновление контента
         if (core_is_fx_blocking()) {
             g_display->mode = DISPLAY_MODE_EFFECT;
             return; 
         } 
-        // Если эффект прозрачный (яркостный), продолжаем обновление
         g_display->mode = DISPLAY_MODE_CONTENT;
     } else {
         g_display->fx_active = false;
         g_display->mode = DISPLAY_MODE_CONTENT;
     }
 
-    // 4. Обновление контента и точек
     core_dot_blink_tick(now);
     core_push_content_to_ll();
 }

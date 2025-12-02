@@ -13,8 +13,12 @@
 #define VFD_MAX_DIGITS      10
 #define VFD_MAX_BRIGHTNESS  255
 
-/* Тип данных для маски сегментов (8 бит). */
-typedef uint8_t vfd_seg_t;
+/* 
+ * Тип данных для карты сегментов (8 бит).
+ * Каждый бит соответствует состоянию сегмента (A-G, DP).
+ * См. LL_API.md для описания битовой раскладки.
+ */
+typedef uint8_t vfd_segment_map_t;
 
 /* Конфигурация драйвера низкого уровня. */
 typedef struct {
@@ -55,10 +59,10 @@ void display_ll_stop_refresh(void);
 uint8_t display_ll_get_digit_count(void);
 
 /* Получение указателя на сырой буфер сегментов. */
-vfd_seg_t *display_ll_get_buffer(void);
+vfd_segment_map_t *display_ll_get_buffer(void);
 
-/* Установка маски сегментов для указанного разряда. */
-void display_ll_set_digit_raw(uint8_t index, vfd_seg_t segmask);
+/* Установка паттерна сегментов для указанного разряда. */
+void display_ll_set_digit_raw(uint8_t index, vfd_segment_map_t segments);
 
 /* =====================
  *        ЯРКОСТЬ
