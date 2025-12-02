@@ -6,11 +6,9 @@
 
 /*
  * Content Layer.
- * Модуль отвечает за преобразование высокоуровневых типов данных (числа, время, текст)
- * в сырые паттерны сегментов.
+ * Модуль отвечает за преобразование высокоуровневых типов данных.
  *
- * FIX #23: Удалено управление системными точками (DP). 
- * Теперь Content Layer формирует только цифры. Разделители накладываются в Core.
+ * FIX #25: Безопасная обработка INT32_MIN через uint32_t во избежание UB и OOB-чтения.
  */
 
 extern void display_core_set_buffer(const vfd_segment_map_t *buf, uint8_t size);
@@ -33,15 +31,21 @@ void display_show_number(int32_t value)
     memset(buf, 0, sizeof(buf));
 
     bool negative = (value < 0);
-    if (negative) value = -value;
+    
+    // FIX #25: Используем uint32_t для модуля числа.
+    // Это предотвращает UB при value == INT32_MIN (-2147483648),
+    // так как -INT32_MIN не влезает в int32_t, но влезает в uint32_t.
+    // Трюк -(uint32_t)value корректно переворачивает биты для 2's complement.
+    uint32_t abs_val = (negative) ? (0u - (uint32_t)value) : (uint32_t)value;
 
     for (uint8_t i = 0; i < digits; i++) {
-        if (value == 0 && i > 0 && !negative) break;
+        // Проверяем abs_val вместо value
+        if (abs_val == 0 && i > 0 && !negative) break;
 
-        uint8_t d = (uint8_t)(value % 10);
-        value /= 10;
+        uint8_t d = (uint8_t)(abs_val % 10);
+        abs_val /= 10;
         
-        if (value == 0 && negative) {
+        if (abs_val == 0 && negative) {
             buf[digits - 1 - i] = display_font_digit(d);
             if (i + 1 < digits) {
                  buf[digits - 1 - (i+1)] = display_font_get_char('-');
@@ -63,8 +67,6 @@ void display_show_number(int32_t value)
 
 void display_show_time(uint8_t hours, uint8_t minutes, bool show_colon)
 {
-    // show_colon игнорируется (deprecated). 
-    // Настройка точек производится через display_set_dots_config().
     (void)show_colon; 
 
     uint8_t digits = get_active_digits();
@@ -80,8 +82,6 @@ void display_show_time(uint8_t hours, uint8_t minutes, bool show_colon)
     buf[1] = display_font_digit(hours % 10);
     buf[2] = display_font_digit(minutes / 10);
     buf[3] = display_font_digit(minutes % 10);
-
-    // FIX #23: Удалено buf[1] |= 0x80. Точки накладываются в Core.
 
     display_core_set_buffer(buf, digits);
 }
@@ -106,8 +106,6 @@ void display_show_date(uint8_t day, uint8_t month)
     buf[2] = display_font_digit(month / 10);
     buf[3] = display_font_digit(month % 10);
     
-    // FIX #23: Удалено buf[1] |= 0x80.
-
     display_core_set_buffer(buf, digits);
 }
 
@@ -133,7 +131,6 @@ void display_show_text(const char *text)
         char c = text[str_idx];
         vfd_segment_map_t seg = display_font_get_char(c);
         
-        // Точки внутри текста оставляем как часть контента
         if (text[str_idx+1] == '.') {
             seg |= 0x80; 
             str_idx++;
