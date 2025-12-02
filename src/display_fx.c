@@ -55,6 +55,8 @@ static bool fx_is_blocking_type(fx_type_t type) {
 /*
  * Завершение эффекта.
  * Восстанавливает состояние дисплея (яркость и/или контент) из Snapshot.
+ *
+ * FIX #15: Для Morph подменяем snapshot на target, чтобы "зафиксировать" результат.
  */
 static void fx_finish_internal(void)
 {
@@ -62,8 +64,19 @@ static void fx_finish_internal(void)
     fx_type_t finished_type = g_display->fx_type;
     bool was_blocking = fx_is_blocking_type(finished_type);
 
+    // Специальная обработка для Morph
+    if (finished_type == FX_MORPH && g_display->saved_valid) {
+        uint8_t digits = g_display->digit_count;
+        // 1. Обновляем основной буфер контента (чтобы логика Core знала о новом состоянии)
+        memcpy(g_display->content_buffer, g_display->fx_morph_target, digits);
+        
+        // 2. Обновляем Snapshot (чтобы блок восстановления ниже записал target в LL)
+        memcpy(g_display->saved_content_buffer, g_display->fx_morph_target, digits);
+    }
+
     if (was_blocking && g_display->saved_valid) {
-        // Для блокирующих эффектов: полное восстановление контента и яркости
+        // Для блокирующих эффектов восстанавливаем состояние из snapshot.
+        // В случае Morph snapshot уже содержит новые данные (target).
         uint8_t digits = g_display->digit_count;
         for (uint8_t i = 0; i < digits; i++) {
             display_ll_set_digit_raw(i, g_display->saved_content_buffer[i]);
