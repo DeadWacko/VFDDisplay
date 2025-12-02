@@ -6,6 +6,7 @@
 #include "hardware/sync.h"
 
 #include <string.h>
+#include <assert.h> // FIX #4: Для отладочных проверок
 
 /*
  * Low-Level Driver Implementation.
@@ -321,15 +322,29 @@ vfd_segment_map_t *display_ll_get_buffer(void) { return s_ll.seg_buffer; }
 
 void display_ll_set_digit_raw(uint8_t idx, vfd_segment_map_t segments)
 {
-    if (!s_ll.initialized || idx >= s_ll.digit_count) return;
+    if (!s_ll.initialized) return;
+
+    // FIX #4: Assert срабатывает только в Debug-сборке, помогая найти ошибку.
+    // В Release-сборке assert вырезается компилятором.
+    assert(idx < s_ll.digit_count);
+
+    // Защита времени выполнения (Runtime Safety) для Release-сборки.
+    // Если индекс неверен, мы просто игнорируем запись, чтобы не повредить память.
+    if (idx >= s_ll.digit_count) return;
+    
     s_ll.seg_buffer[idx] = segments;
 }
 
 void display_ll_set_brightness(uint8_t idx, uint8_t lvl)
 {
-    if (!s_ll.initialized || idx >= s_ll.digit_count) return;
+    if (!s_ll.initialized) return;
+
+    // FIX #4: Отладочная проверка диапазона
+    assert(idx < s_ll.digit_count);
+
+    // Runtime защита
+    if (idx >= s_ll.digit_count) return;
     
-    // SYNC: Одиночная запись атомарна, блокировка прерываний удалена.
     s_ll.brightness[idx] = lvl;
 }
 
@@ -337,9 +352,7 @@ void display_ll_set_brightness_all(uint8_t lvl)
 {
     if (!s_ll.initialized) return;
     
-    // SYNC: Используем критическую секцию, так как обновляем массив.
-    // Если прерывание произойдет посередине цикла, половина экрана будет
-    // иметь одну яркость, а вторая половина — другую (tearing).
+    // Здесь assert не нужен, так как мы итерируемся по внутреннему limit
     uint32_t irq = save_and_disable_interrupts();
     for (int i = 0; i < s_ll.digit_count; i++)
         s_ll.brightness[i] = lvl;
