@@ -458,10 +458,20 @@ bool display_fx_dissolve(uint32_t duration_ms) {
     return true;
 }
 
+/*
+ * FIX #18: Корректировка длительности Marquee для обрезанного текста.
+ */
 bool display_fx_marquee(const char *text, uint32_t speed_ms) {
     if (!text) return false;
     uint16_t len = strlen(text);
     if (len == 0) return false;
+    
+    // Ограничиваем длину текста тем же пределом, что и в fx_prepare_text,
+    // чтобы не считать время для символов, которые будут отброшены.
+    // FX_TEXT_MAX_LEN включает null-терминатор, поэтому полезная длина -1.
+    if (len >= FX_TEXT_MAX_LEN) {
+        len = FX_TEXT_MAX_LEN - 1;
+    }
     
     uint32_t total_steps = len + g_display->digit_count; 
     uint32_t duration = total_steps * speed_ms;
