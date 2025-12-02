@@ -3,7 +3,7 @@
 #include "pico/stdlib.h"
 #include "hardware/gpio.h"
 #include "hardware/timer.h"
-#include "pico/sync.h"
+#include "hardware/sync.h" // Для save_and_disable_interrupts
 
 #include <string.h>
 
@@ -14,11 +14,14 @@
  * Основные механизмы:
  * - Мультиплексирование через повторяющийся таймер (repeating_timer).
  * - Регулировка яркости (PWM) через аппаратный будильник (alarm).
- * - Защита от гонок данных (critical sections).
  * - Программная эмуляция SPI (Bit-banging).
- * * История изменений:
- * - Issue #12: Поддержка 16-битной маски сеток (до 10 разрядов).
- * - Issue #7:  Оптимизация математики в ISR (убрано деление).
+ *
+ * Модель синхронизации (Issue #10):
+ * - Спинлоки удалены как избыточные.
+ * - Volatile убраны для упрощения.
+ * - Одиночные записи (uint8_t/vfd_seg_t) считаются атомарными.
+ * - Критические секции используются только для атомарного чтения пары значений в ISR
+ *   и при массовом обновлении яркости.
  */
 
 // ============================================================================
@@ -34,9 +37,9 @@
 
 typedef struct
 {
-    // Флаги состояния
-    volatile bool initialized;
-    volatile bool refresh_running;
+    // Флаги состояния (убраны volatile согласно issue #10)
+    bool initialized;
+    bool refresh_running;
 
     // Конфигурация GPIO
     uint8_t data_pin;
@@ -48,7 +51,7 @@ typedef struct
     uint16_t refresh_rate_hz;
     uint32_t slot_period_us;
 
-    // Буферы данных (защищены спинлоком/прерываниями)
+    // Буферы данных
     vfd_seg_t seg_buffer[VFD_MAX_DIGITS];
     uint8_t   brightness[VFD_MAX_DIGITS];
 
@@ -61,10 +64,6 @@ typedef struct
     // Системные таймеры
     struct repeating_timer fast_timer;
     alarm_id_t clear_alarm;
-
-    // Синхронизация
-    spin_lock_t *lock;
-    int          lock_num;
 
     bool gamma_enabled;
 
@@ -97,7 +96,8 @@ static inline void ll_latch(void)
     LL_SHIFT_DELAY();
 }
 
-/* * Отправка кадра данных.
+/* 
+ * Отправка кадра данных.
  * Автоматически учитывает необходимость второго байта сетки.
  * Порядок вывода: [Grid Low] -> (Grid High) -> [Segments]
  */
@@ -121,8 +121,8 @@ static inline void ll_shift_frame(uint16_t grid_mask, uint8_t segs)
 //  ГАММА-КОРРЕКЦИЯ
 // ============================================================================
 
-/* * Вычисление квадратичной гаммы.
- * FIX #7: Добавлена явная обработка границ для точности и скорости.
+/* 
+ * Вычисление квадратичной гаммы.
  */
 static inline uint8_t ll_gamma_calc(uint8_t x)
 {
@@ -164,13 +164,14 @@ static bool ll_fast_timer_cb(struct repeating_timer *t)
     uint8_t digit = s_ll.current_digit;
     if (digit >= s_ll.digit_count) digit = 0;
 
-    // Атомарное чтение данных
+    // SYNC: Отключаем прерывания только для атомарного чтения пары значений
+    // (сегменты + яркость) для текущего разряда. Это гарантирует, что мы не
+    // выведем "новые" сегменты со "старой" яркостью.
     uint32_t irq = save_and_disable_interrupts();
     vfd_seg_t segs = s_ll.seg_buffer[digit];
     uint8_t   pwm  = s_ll.brightness[digit];
     restore_interrupts(irq);
 
-    // FIX #12: Используем uint16_t и убираем % 8
     uint16_t grid_mask = (uint16_t)(1u << digit);
 
     // Вывод данных (Grid + Segs)
@@ -189,9 +190,7 @@ static bool ll_fast_timer_cb(struct repeating_timer *t)
             s_ll.clear_alarm = -1;
         }
 
-        // FIX #7: Замена деления на сдвиг. 
-        // on_us = (pwm * period) / 256. Это быстрее, чем / 255.
-        // Так как pwm < 255, результат всегда <= period.
+        // on_us = (pwm * period) / 256.
         uint32_t on_us = ((uint32_t)pwm * s_ll.slot_period_us) >> 8;
         
         uint32_t max_safe_us = s_ll.slot_period_us > 10 ? s_ll.slot_period_us - 10 : s_ll.slot_period_us;
@@ -249,11 +248,7 @@ bool display_ll_init(const display_ll_config_t *cfg)
 
     memset(&s_ll, 0, sizeof(s_ll));
 
-    int lock_id = spin_lock_claim_unused(true);
-    if (lock_id < 0) return false;
-
-    s_ll.lock_num = lock_id;
-    s_ll.lock = spin_lock_init((uint)lock_id);
+    // SYNC: Удалена инициализация Spinlock (Issue #10)
 
     s_ll.data_pin        = cfg->data_pin;
     s_ll.clock_pin       = cfg->clock_pin;
@@ -262,7 +257,7 @@ bool display_ll_init(const display_ll_config_t *cfg)
     s_ll.refresh_rate_hz = cfg->refresh_rate_hz;
     s_ll.gamma_enabled   = true;
 
-    // FIX #12: Определяем режим работы шины. 
+    // Определяем режим работы шины
     s_ll.extended_grid_mode = (cfg->digit_count > 8);
 
     for (int i = 0; i < VFD_MAX_DIGITS; i++) {
@@ -321,7 +316,7 @@ void display_ll_deinit(void)
     if (!s_ll.initialized) return;
     display_ll_stop_refresh();
     
-    if (s_ll.lock_num >= 0) spin_lock_unclaim((uint)s_ll.lock_num);
+    // SYNC: Удалено освобождение spinlock
     
     gpio_set_dir(s_ll.data_pin,  GPIO_IN);
     gpio_set_dir(s_ll.clock_pin, GPIO_IN);
@@ -341,22 +336,27 @@ vfd_seg_t *display_ll_get_buffer(void) { return s_ll.seg_buffer; }
 void display_ll_set_digit_raw(uint8_t idx, vfd_seg_t seg)
 {
     if (!s_ll.initialized || idx >= s_ll.digit_count) return;
-    uint32_t irq = save_and_disable_interrupts();
+    
+    // SYNC: Одиночная запись атомарна, блокировка прерываний удалена.
+    // Гонки данных здесь не критичны (максимум - мерцание 1 кадра).
     s_ll.seg_buffer[idx] = seg;
-    restore_interrupts(irq);
 }
 
 void display_ll_set_brightness(uint8_t idx, uint8_t lvl)
 {
     if (!s_ll.initialized || idx >= s_ll.digit_count) return;
-    uint32_t irq = save_and_disable_interrupts();
+    
+    // SYNC: Одиночная запись атомарна, блокировка прерываний удалена.
     s_ll.brightness[idx] = lvl;
-    restore_interrupts(irq);
 }
 
 void display_ll_set_brightness_all(uint8_t lvl)
 {
     if (!s_ll.initialized) return;
+    
+    // SYNC: Используем критическую секцию, так как обновляем массив.
+    // Если прерывание произойдет посередине цикла, половина экрана будет
+    // иметь одну яркость, а вторая половина — другую (tearing).
     uint32_t irq = save_and_disable_interrupts();
     for (int i = 0; i < s_ll.digit_count; i++)
         s_ll.brightness[i] = lvl;
