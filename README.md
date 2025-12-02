@@ -5,7 +5,7 @@
 [![GitHub stars](https://img.shields.io/github/stars/DeadWacko/VFDDisplay?style=flat-square)](https://github.com/DeadWacko/VFDDisplay/stargazers)
 [![GitHub issues](https://img.shields.io/github/issues/DeadWacko/VFDDisplay?style=flat-square)](https://github.com/DeadWacko/VFDDisplay/issues)
 
-# VFDDisplay Library (v1.0.0)
+# VFDDisplay Library (v1.1.0)
 
 **Библиотека для управления VFD (вакуумно-люминесцентными) дисплеями на базе микроконтроллера RP2040 (Raspberry Pi Pico).**
 
