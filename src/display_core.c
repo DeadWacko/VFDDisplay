@@ -13,6 +13,9 @@
 
 /*
  * High-Level Core.
+ * Реализация центральной логики дисплея.
+ * 
+ * FIX #24: Автояркость теперь работает поверх эффектов (Global Brightness Limit).
  */
 
 static display_state_t g_display_state;
@@ -39,11 +42,16 @@ display_state_t *const g_display = &g_display_state;
 //  Вспомогательные функции
 // ============================================================================
 
-static bool core_is_fx_blocking(void)
+/*
+ * Проверка: является ли эффект "блокирующим" для сегментов.
+ * Если true — Core не должен обновлять сегменты (content_buffer).
+ */
+static bool core_is_fx_segment_blocking(void)
 {
     if (!g_display->fx_active) return false;
     
     switch (g_display->fx_type) {
+        // Эти эффекты сами рисуют сегменты
         case FX_GLITCH:
         case FX_MORPH:
         case FX_DISSOLVE:
@@ -53,22 +61,33 @@ static bool core_is_fx_blocking(void)
         case FX_DECODE:
         case FX_PINGPONG:
             return true;
-            
+        
+        // Эти эффекты меняют только яркость, сегменты остаются от контента
+        default:
+            return false;
+    }
+}
+
+/*
+ * Проверка: управляет ли эффект яркостью покадрово.
+ * Если true — Core не должен вызывать ll_set_brightness (конфликт).
+ * Core должен только обновить fx_base_brightness.
+ */
+static bool core_does_fx_control_brightness(void)
+{
+    if (!g_display->fx_active) return false;
+
+    switch (g_display->fx_type) {
         case FX_FADE_IN:
         case FX_FADE_OUT:
         case FX_PULSE:
         case FX_WAVE:
         case FX_MATRIX:
         case FX_HEARTBEAT:
+            return true;
         default:
             return false;
     }
-}
-
-static inline uint8_t clamp_u8(uint32_t v, uint8_t max_val)
-{
-    if (v > max_val) return max_val;
-    return (uint8_t)v;
 }
 
 static void core_push_brightness_to_ll(uint8_t level)
@@ -87,7 +106,6 @@ static void core_push_content_to_ll(void)
     for (uint8_t i = 0; i < digits; i++) {
         vfd_segment_map_t seg = g_display->content_buffer[i];
         
-        // Наложение карты точек (если включено)
         if (g_display->dot_blink_enabled && g_display->dot_state) {
             for (uint8_t k = 0; k < 2; k++) {
                 if (g_display->dot_digit_positions[k] == i) {
@@ -110,10 +128,15 @@ static uint16_t core_read_adc_filtered(uint16_t adc_pin)
     return (uint16_t)(acc / samples);
 }
 
+/*
+ * Расчет и применение целевой яркости.
+ * Реализует подход "Global Brightness Limit" для эффектов.
+ */
 static void core_update_brightness_now(void)
 {
     uint8_t new_level = g_display->user_brightness_level;
 
+    // 1. Расчет целевого уровня (Auto / Night / Manual)
     if (g_display->auto_brightness_enabled) {
         uint16_t raw = core_read_adc_filtered((uint16_t)g_display->adc_pin); 
         uint32_t val = (uint32_t)raw * VFD_MAX_BRIGHTNESS;
@@ -135,9 +158,26 @@ static void core_update_brightness_now(void)
 
     if (new_level > VFD_MAX_BRIGHTNESS) new_level = VFD_MAX_BRIGHTNESS;
 
+    // 2. Обновление "Базовой яркости" для движка эффектов.
+    // Эффекты (Pulse, Wave) будут использовать это значение как амплитуду в следующем кадре.
+    if (g_display->fx_active) {
+        g_display->fx_base_brightness = new_level;
+    }
+
+    // 3. Проверка необходимости применения к железу (LL)
+    
+    // Если активен эффект, который сам управляет яркостью (Pulse, Wave),
+    // то Core НЕ должен трогать LL напрямую, иначе будет "битва" за регистры.
+    if (core_does_fx_control_brightness()) {
+        return; 
+    }
+
+    // Гистерезис (только для прямой установки)
     uint8_t current = g_display->final_brightness[0];
     uint8_t diff = (current > new_level) ? (current - new_level) : (new_level - current);
-    if (diff < DISPLAY_BRIGHTNESS_HYSTERESIS) return;
+    
+    // Если разница мала, не обновляем (чтобы не дрожало), кроме случая, когда эффект только что закончился
+    if (diff < DISPLAY_BRIGHTNESS_HYSTERESIS && !g_display->fx_active) return;
 
     for (uint8_t i = 0; i < g_display->digit_count; i++) g_display->final_brightness[i] = new_level;
     core_push_brightness_to_ll(new_level);
@@ -145,7 +185,10 @@ static void core_update_brightness_now(void)
 
 static void core_brightness_tick(absolute_time_t now)
 {
-    if (g_display->fx_active || g_display->ov_active) return;
+    // FIX #24: Убрана блокировка при g_display->fx_active.
+    // Оверлеи (Boot, WiFi) пока оставляем блокирующими, так как они короткие и важные.
+    if (g_display->ov_active) return;
+
     if (!(g_display->auto_brightness_enabled || g_display->night_mode_enabled)) return;
 
     uint32_t now_ms  = to_ms_since_boot(now);
@@ -160,7 +203,9 @@ static void core_dot_blink_tick(absolute_time_t now)
 {
     if (!g_display->dot_blink_enabled || g_display->digit_count == 0) return;
     if (g_display->ov_active) return;
-    if (core_is_fx_blocking()) return;
+    
+    // Если эффект перехватывает сегменты (например, Marquee), точки не мигают
+    if (core_is_fx_segment_blocking()) return;
 
     uint32_t now_ms  = to_ms_since_boot(now);
     uint32_t last_ms = to_ms_since_boot(g_display->dot_last_toggle);
@@ -242,10 +287,19 @@ void display_set_brightness(uint8_t brightness)
     if (brightness > VFD_MAX_BRIGHTNESS) brightness = VFD_MAX_BRIGHTNESS;
     g_display->user_brightness_level = brightness;
     
-    if (!g_display->auto_brightness_enabled && !g_display->night_mode_enabled && !g_display->fx_active) {
-        for (uint8_t i = 0; i < g_display->digit_count; i++) 
-            g_display->final_brightness[i] = brightness;
-        core_push_brightness_to_ll(brightness);
+    // Если автояркость выключена, применяем немедленно
+    if (!g_display->auto_brightness_enabled && !g_display->night_mode_enabled) {
+        // Если эффектов нет или эффект не управляет яркостью -> применяем к LL
+        if (!g_display->fx_active || !core_does_fx_control_brightness()) {
+             for (uint8_t i = 0; i < g_display->digit_count; i++) 
+                g_display->final_brightness[i] = brightness;
+            core_push_brightness_to_ll(brightness);
+        }
+        
+        // В любом случае обновляем base для эффектов
+        if (g_display->fx_active) {
+            g_display->fx_base_brightness = brightness;
+        }
     } else {
         core_update_brightness_now();
     }
@@ -280,7 +334,7 @@ void display_core_set_buffer(const vfd_segment_map_t *buf, uint8_t size)
     for (uint8_t i = n; i < g_display->digit_count; i++) g_display->content_buffer[i] = 0;
 
     if (!display_is_overlay_running()) {
-        if (!core_is_fx_blocking()) {
+        if (!core_is_fx_segment_blocking()) {
             core_push_content_to_ll();
         }
     }
@@ -296,6 +350,7 @@ void display_process(void)
     if (!g_display->initialized) return;
     absolute_time_t now = get_absolute_time();
 
+    // 1. Обновление яркости (теперь работает поверх FX)
     core_brightness_tick(now);
 
     if (display_is_overlay_running()) {
@@ -312,7 +367,7 @@ void display_process(void)
         g_display->fx_active = true;
         display_fx_tick();
         
-        if (core_is_fx_blocking()) {
+        if (core_is_fx_segment_blocking()) {
             g_display->mode = DISPLAY_MODE_EFFECT;
             return; 
         } 
