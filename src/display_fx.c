@@ -113,7 +113,6 @@ static bool fx_start_basic(fx_type_t type, uint32_t duration_ms, uint32_t frame_
 
     fx_seed_rng_if_needed();
 
-    // Создание снимка состояния (Snapshot)
     uint8_t digits = g_display->digit_count;
     for (uint8_t i = 0; i < digits; i++) {
         g_display->saved_content_buffer[i] = g_display->content_buffer[i];
@@ -132,8 +131,13 @@ static bool fx_start_basic(fx_type_t type, uint32_t duration_ms, uint32_t frame_
     if (base == 0) base = VFD_MAX_BRIGHTNESS;
     g_display->fx_base_brightness = base;
 
-    // Сброс внутренних счетчиков
+    // Сброс внутренних счетчиков эффектов
     g_display->fx_glitch_active = false;
+    
+    // FIX #16: Сбрасываем таймер следующего глюка, чтобы эффект начинался сразу,
+    // а не ждал тайминга от предыдущего запуска.
+    g_display->fx_glitch_next_ms = 0; 
+    
     g_display->fx_matrix_last_ms = 0;
     g_display->fx_morph_step = 0;
     g_display->fx_dissolve_step = 0;
