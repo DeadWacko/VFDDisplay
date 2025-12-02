@@ -325,14 +325,25 @@ vfd_segment_map_t *display_content_buffer(void) { return g_display->content_buff
 extern void display_fx_tick(void);
 extern void display_overlay_tick(void);
 
-void display_process(void) {
+void display_process(void)
+{
     if (!g_display->initialized) return;
     absolute_time_t now = get_absolute_time();
+
+    // 1. Обновление яркости (теперь работает поверх FX)
     core_brightness_tick(now);
 
+    // 2. Обработка оверлеев (Высший приоритет)
     if (display_is_overlay_running()) {
         g_display->ov_active = true;
-        g_display->fx_active = false;
+        
+        // FIX #19: Жесткий сброс (fx_active = false) заменен на безопасный stop(),
+        // хотя основной вызов stop() происходит в overlay_start_common.
+        // Эта строка - страховка.
+        if (g_display->fx_active) {
+            display_fx_stop();
+        }
+        
         display_overlay_tick();
         g_display->mode = DISPLAY_MODE_OVERLAY;
         return;
@@ -340,9 +351,11 @@ void display_process(void) {
         g_display->ov_active = false;
     }
 
+    // 3. Обработка эффектов
     if (display_fx_is_running()) {
         g_display->fx_active = true;
         display_fx_tick();
+        
         if (core_is_fx_segment_blocking()) {
             g_display->mode = DISPLAY_MODE_EFFECT;
             return; 

@@ -17,6 +17,10 @@
  * - Состояние хранится в g_display.
  * - Используются безопасные методы LL (set_digit_raw).
  * - Логика snapshot/restore реализована через saved_buffer в g_display.
+ * 
+ * 
+ * 
+ *  FIX #19: Корректное завершение FX перед запуском Overlay.
  */
 
 // ============================================================================
@@ -95,8 +99,15 @@ void display_overlay_stop(void)
 static bool overlay_start_common(overlay_type_t type, uint32_t frame_ms)
 {
     if (!g_display->initialized) return false;
-    if (g_display->ov_active) return false; // Не прерываем текущий оверлей
+    if (g_display->ov_active) return false;
 
+    // FIX #19: Если активен эффект, корректно завершаем его.
+    // Это восстановит "чистый" контент в буфер дисплея и вызовет колбэки FX.
+    if (g_display->fx_active) {
+        display_fx_stop();
+    }
+
+    // Теперь, когда FX завершен, делаем снимок чистого экрана
     ov_save_snapshot();
 
     g_display->ov_type      = type;
@@ -104,7 +115,7 @@ static bool overlay_start_common(overlay_type_t type, uint32_t frame_ms)
     g_display->ov_step      = 0;
     g_display->ov_loop      = 0;
     g_display->ov_frame_ms  = frame_ms;
-    g_display->ov_start_time = get_absolute_time(); // Используем как last_tick
+    g_display->ov_start_time = get_absolute_time();
 
     return true;
 }
