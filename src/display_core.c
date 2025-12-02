@@ -171,18 +171,30 @@ static void core_dot_blink_tick(absolute_time_t now)
 //  Реализация API
 // ============================================================================
 
-void display_init(uint8_t digit_count)
+/*
+ * FIX #5: Основная логика инициализации перенесена сюда.
+ * Принимает готовую структуру конфигурации.
+ */
+void display_init_ex(const display_ll_config_t *cfg)
 {
-    if (digit_count == 0 || digit_count > VFD_MAX_DIGITS) digit_count = 4;
+    if (!cfg) return;
+
     memset(&g_display_state, 0, sizeof(g_display_state));
 
-    g_display->digit_count = digit_count;
-    g_display->refresh_rate_hz = DISPLAY_DEFAULT_REFRESH_HZ;
+    // Копируем параметры из конфига в состояние ядра
+    g_display->digit_count = cfg->digit_count;
+    g_display->refresh_rate_hz = cfg->refresh_rate_hz;
+
+    // Настройка параметров ядра по умолчанию
     g_display->user_brightness_level = VFD_MAX_BRIGHTNESS;
     g_display->night_brightness = DISPLAY_BRIGHTNESS_NIGHT;
     g_display->night_start_hour = 23;
     g_display->night_end_hour = 7;
+    
+    // ADC пин пока остается стандартным (так как его нет в ll_config),
+    // но его можно будет изменить отдельным сеттером в будущем.
     g_display->adc_pin = DISPLAY_DEFAULT_ADC_PIN;
+    
     g_display->brightness_update_period_ms = DISPLAY_BRIGHTNESS_UPDATE_MS;
     g_display->brightness_last_update = get_absolute_time();
     g_display->dot_period_ms = DOT_DEFAULT_PERIOD_MS;
@@ -196,30 +208,45 @@ void display_init(uint8_t digit_count)
         g_display->final_brightness[i] = VFD_MAX_BRIGHTNESS;
     }
 
-    display_ll_config_t cfg = {
-        .data_pin = DISPLAY_DEFAULT_DATA_PIN,
-        .clock_pin = DISPLAY_DEFAULT_CLOCK_PIN,
-        .latch_pin = DISPLAY_DEFAULT_LATCH_PIN,
-        .digit_count = g_display->digit_count,
-        .refresh_rate_hz = g_display->refresh_rate_hz,
-    };
-
-    if (!display_ll_init(&cfg)) {
-        LOG_ERROR("display_init: LL init failed");
+    // Инициализация драйвера с переданным конфигом
+    if (!display_ll_init(cfg)) {
+        LOG_ERROR("display_init_ex: LL init failed");
         return;
     }
     display_ll_start_refresh();
 
+    // Инициализация периферии (ADC)
     adc_init();
     adc_gpio_init((uint)g_display->adc_pin);
     if (g_display->adc_pin >= 26 && g_display->adc_pin <= 29) {
         adc_select_input(g_display->adc_pin - 26);
     }
 
+    // Первичное обновление
+    // Принудительно вызываем update_now, чтобы применить яркость
+    // Для этого временно разрешаем автояркость, если она нужна, или ставим максимум
     core_update_brightness_now();
     core_push_content_to_ll();
+    
     g_display->initialized = true;
-    LOG_INFO("display_init: Success");
+    LOG_INFO("display_init_ex: Success");
+}
+
+
+
+void display_init(uint8_t digit_count)
+{
+    if (digit_count == 0 || digit_count > VFD_MAX_DIGITS) digit_count = 4;
+
+    display_ll_config_t cfg = {
+        .data_pin = DISPLAY_DEFAULT_DATA_PIN,
+        .clock_pin = DISPLAY_DEFAULT_CLOCK_PIN,
+        .latch_pin = DISPLAY_DEFAULT_LATCH_PIN,
+        .digit_count = digit_count,
+        .refresh_rate_hz = DISPLAY_DEFAULT_REFRESH_HZ,
+    };
+
+    display_init_ex(&cfg);
 }
 
 display_mode_t display_get_mode(void) {
