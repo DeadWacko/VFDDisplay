@@ -16,10 +16,9 @@
  * - Регулировка яркости (PWM) через аппаратный будильник (alarm).
  * - Защита от гонок данных (critical sections).
  * - Программная эмуляция SPI (Bit-banging).
- * 
- * Исправления для Issue #12:
- * - Поддержка 16-битной маски сеток.
- * - Адаптивная отправка данных (2 байта для <=8 разрядов, 3 байта для >8).
+ * * История изменений:
+ * - Issue #12: Поддержка 16-битной маски сеток (до 10 разрядов).
+ * - Issue #7:  Оптимизация математики в ISR (убрано деление).
  */
 
 // ============================================================================
@@ -122,11 +121,18 @@ static inline void ll_shift_frame(uint16_t grid_mask, uint8_t segs)
 //  ГАММА-КОРРЕКЦИЯ
 // ============================================================================
 
+/* * Вычисление квадратичной гаммы.
+ * FIX #7: Добавлена явная обработка границ для точности и скорости.
+ */
 static inline uint8_t ll_gamma_calc(uint8_t x)
 {
+    if (x == 0) return 0;
+    if (x == 255) return 255;
+
+    // Расчет для промежуточных значений (x^2 аппроксимация)
     uint32_t v = (uint32_t)x * x + 254u;
     v /= 255u;
-    return (v > 255) ? 255 : (uint8_t)v;
+    return (uint8_t)v;
 }
 
 // ============================================================================
@@ -164,7 +170,7 @@ static bool ll_fast_timer_cb(struct repeating_timer *t)
     uint8_t   pwm  = s_ll.brightness[digit];
     restore_interrupts(irq);
 
-    // FIX #12: Используем uint16_t и убираем % 8, чтобы биты не повторялись
+    // FIX #12: Используем uint16_t и убираем % 8
     uint16_t grid_mask = (uint16_t)(1u << digit);
 
     // Вывод данных (Grid + Segs)
@@ -183,7 +189,10 @@ static bool ll_fast_timer_cb(struct repeating_timer *t)
             s_ll.clear_alarm = -1;
         }
 
-        uint32_t on_us = (uint32_t)pwm * s_ll.slot_period_us / 255u;
+        // FIX #7: Замена деления на сдвиг. 
+        // on_us = (pwm * period) / 256. Это быстрее, чем / 255.
+        // Так как pwm < 255, результат всегда <= period.
+        uint32_t on_us = ((uint32_t)pwm * s_ll.slot_period_us) >> 8;
         
         uint32_t max_safe_us = s_ll.slot_period_us > 10 ? s_ll.slot_period_us - 10 : s_ll.slot_period_us;
         
@@ -254,8 +263,6 @@ bool display_ll_init(const display_ll_config_t *cfg)
     s_ll.gamma_enabled   = true;
 
     // FIX #12: Определяем режим работы шины. 
-    // Если разрядов > 8, нам нужно 2 байта на сетки (всего 3 байта на кадр).
-    // Если разрядов <= 8, оставляем 1 байт на сетки для совместимости со старым железом.
     s_ll.extended_grid_mode = (cfg->digit_count > 8);
 
     for (int i = 0; i < VFD_MAX_DIGITS; i++) {
@@ -304,7 +311,6 @@ void display_ll_stop_refresh(void)
         s_ll.clear_alarm = -1;
     }
     
-    // Гашение дисплея (безопасный вызов через helper)
     ll_shift_frame(0x0000, 0x00);
     
     s_ll.refresh_running = false;
