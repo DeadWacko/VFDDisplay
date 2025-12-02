@@ -13,7 +13,7 @@
  * Реализация временных уведомлений (Boot, WiFi, NTP),
  * которые имеют высший приоритет над контентом и эффектами.
  *
- * Архитектура v4.0:
+ * Архитектура v1.0:
  * - Состояние хранится в g_display.
  * - Используются безопасные методы LL (set_digit_raw).
  * - Логика snapshot/restore реализована через saved_buffer в g_display.
@@ -56,16 +56,24 @@ static void ov_restore_snapshot(void)
 }
 
 /* Завершение работы оверлея */
+/* 
+ * Завершение работы оверлея.
+ * FIX #20: Сохраняем тип оверлея перед сбросом, чтобы передать его в колбэк.
+ */
 static void ov_finish(void)
 {
     ov_restore_snapshot();
 
+    // 1. Сохраняем тип перед очисткой
+    overlay_type_t finished_type = g_display->ov_type;
+
+    // 2. Сбрасываем состояние
     g_display->ov_active = false;
     g_display->ov_type   = OV_NONE;
     
-    // Вызов колбэка, если он задан
+    // 3. Вызываем колбэк с реальным типом
     if (g_display->on_overlay_finished) {
-        g_display->on_overlay_finished(g_display->ov_type);
+        g_display->on_overlay_finished(finished_type);
     }
 }
 
