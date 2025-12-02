@@ -16,16 +16,17 @@
  * - Регулировка яркости (PWM) через аппаратный будильник (alarm).
  * - Защита от гонок данных (critical sections).
  * - Программная эмуляция SPI (Bit-banging).
+ * 
+ * Исправления для Issue #12:
+ * - Поддержка 16-битной маски сеток.
+ * - Адаптивная отправка данных (2 байта для <=8 разрядов, 3 байта для >8).
  */
 
 // ============================================================================
 //  КОНФИГУРАЦИЯ
 // ============================================================================
 
-/* Гарантированная задержка для тактирования сдвиговых регистров (NOP). */
 #define LL_SHIFT_DELAY() __asm volatile ("nop\n nop\n nop\n");
-
-/* Минимальная длительность импульса PWM (мкс) для стабильной работы таймера. */
 #define LL_MIN_PULSE_US   4
 
 // ============================================================================
@@ -54,6 +55,9 @@ typedef struct
 
     // Контекст развертки
     uint8_t current_digit;
+    
+    // Флаг расширенного режима (для разрядов > 8 требуется 2 байта на сетку)
+    bool extended_grid_mode; 
 
     // Системные таймеры
     struct repeating_timer fast_timer;
@@ -74,7 +78,7 @@ static display_ll_state_t s_ll;
 // ============================================================================
 
 /* Программная отправка байта (MSB first). */
-static inline void ll_shift_out(uint8_t data)
+static inline void ll_shift_byte(uint8_t data)
 {
     for (int i = 7; i >= 0; i--)
     {
@@ -94,11 +98,30 @@ static inline void ll_latch(void)
     LL_SHIFT_DELAY();
 }
 
+/* * Отправка кадра данных.
+ * Автоматически учитывает необходимость второго байта сетки.
+ * Порядок вывода: [Grid Low] -> (Grid High) -> [Segments]
+ */
+static inline void ll_shift_frame(uint16_t grid_mask, uint8_t segs)
+{
+    // 1. Младший байт сетки (Grids 0-7)
+    ll_shift_byte((uint8_t)(grid_mask & 0xFFu));
+    
+    // 2. Старший байт сетки (Grids 8-15), если используется > 8 разрядов
+    if (s_ll.extended_grid_mode) {
+        ll_shift_byte((uint8_t)((grid_mask >> 8) & 0xFFu));
+    }
+
+    // 3. Сегменты
+    ll_shift_byte(segs);
+
+    ll_latch();
+}
+
 // ============================================================================
 //  ГАММА-КОРРЕКЦИЯ
 // ============================================================================
 
-/* Вычисление квадратичной гаммы (x^2 / 255). */
 static inline uint8_t ll_gamma_calc(uint8_t x)
 {
     uint32_t v = (uint32_t)x * x + 254u;
@@ -112,23 +135,19 @@ static inline uint8_t ll_gamma_calc(uint8_t x)
 
 /*
  * Callback аппаратного будильника (PWM OFF).
- * Вызывается по окончании времени свечения текущего разряда.
- * Гасит дисплей (отправляет нули).
+ * Гасит дисплей (отправляет нули), соблюдая разрядность шины.
  */
 static int64_t ll_clear_cb(alarm_id_t id, void *user_data)
 {
     (void)id;
     (void)user_data;
-    ll_shift_out(0x00);
-    ll_shift_out(0x00);
-    ll_latch();
+    // Отправляем пустой кадр (0 для сеток, 0 для сегментов)
+    ll_shift_frame(0x0000, 0x00);
     return 0;
 }
 
 /*
  * Callback повторяющегося таймера (Multiplexing Step).
- * Переключает активный разряд (сетку) и загружает данные сегментов.
- * Устанавливает будильник для выключения яркости (PWM).
  */
 static bool ll_fast_timer_cb(struct repeating_timer *t)
 {
@@ -139,27 +158,23 @@ static bool ll_fast_timer_cb(struct repeating_timer *t)
     uint8_t digit = s_ll.current_digit;
     if (digit >= s_ll.digit_count) digit = 0;
 
-    // Атомарное чтение данных текущего разряда
+    // Атомарное чтение данных
     uint32_t irq = save_and_disable_interrupts();
     vfd_seg_t segs = s_ll.seg_buffer[digit];
     uint8_t   pwm  = s_ll.brightness[digit];
     restore_interrupts(irq);
 
-    // Формирование маски сетки (1-hot encoding)
-    uint8_t grid_mask = (uint8_t)(1u << (digit % 8));
+    // FIX #12: Используем uint16_t и убираем % 8, чтобы биты не повторялись
+    uint16_t grid_mask = (uint16_t)(1u << digit);
 
-    // Вывод данных в сдвиговые регистры
-    ll_shift_out(grid_mask);
-    ll_shift_out(segs);
-    ll_latch();
+    // Вывод данных (Grid + Segs)
+    ll_shift_frame(grid_mask, segs);
 
     // Логика PWM
     if (pwm == 0)
     {
         // Яркость 0: гасим сразу
-        ll_shift_out(0x00);
-        ll_shift_out(0x00);
-        ll_latch();
+        ll_shift_frame(0x0000, 0x00);
     }
     else if (pwm < 255)
     {
@@ -167,35 +182,27 @@ static bool ll_fast_timer_cb(struct repeating_timer *t)
             cancel_alarm(s_ll.clear_alarm);
             s_ll.clear_alarm = -1;
         }
-        // Расчет времени включения
+
         uint32_t on_us = (uint32_t)pwm * s_ll.slot_period_us / 255u;
         
-        // Anti-Ghosting: Гарантированный Dead Time (10 мкс) перед следующим слотом
         uint32_t max_safe_us = s_ll.slot_period_us > 10 ? s_ll.slot_period_us - 10 : s_ll.slot_period_us;
         
         if (on_us > max_safe_us) on_us = max_safe_us;
         if (on_us < LL_MIN_PULSE_US) on_us = LL_MIN_PULSE_US;
 
-        // Установка будильника на гашение
         alarm_id_t new_id = add_alarm_in_us((int64_t)on_us, ll_clear_cb, NULL, true);
 
         if (new_id >= 0)
             s_ll.clear_alarm = new_id;
         else
         {
-            // Fallback: если таймер не сработал, гасим сразу во избежание зависания
-            ll_shift_out(0x00);
-            ll_shift_out(0x00);
-            ll_latch();
+            // Fallback
+            ll_shift_frame(0x0000, 0x00);
             s_ll.clear_alarm = -1;
         }
     }
-    else
-    {
-        // Яркость 255: горит весь период слота (100% duty cycle)
-    }
+    // else pwm == 255: горит весь слот
 
-    // Переход к следующему разряду
     digit++;
     if (digit >= s_ll.digit_count) digit = 0;
     s_ll.current_digit = digit;
@@ -215,7 +222,6 @@ bool display_ll_init(const display_ll_config_t *cfg)
 
     if (s_ll.initialized) display_ll_deinit();
 
-    // Инициализация GPIO
     gpio_init(cfg->data_pin);
     gpio_init(cfg->clock_pin);
     gpio_init(cfg->latch_pin);
@@ -224,7 +230,6 @@ bool display_ll_init(const display_ll_config_t *cfg)
     gpio_set_dir(cfg->clock_pin, GPIO_OUT);
     gpio_set_dir(cfg->latch_pin, GPIO_OUT);
     
-    // Установка высокой скорости нарастания фронтов (Slew Rate)
     gpio_set_slew_rate(cfg->data_pin, GPIO_SLEW_RATE_FAST);
     gpio_set_slew_rate(cfg->clock_pin, GPIO_SLEW_RATE_FAST);
     gpio_set_slew_rate(cfg->latch_pin, GPIO_SLEW_RATE_FAST);
@@ -235,14 +240,12 @@ bool display_ll_init(const display_ll_config_t *cfg)
 
     memset(&s_ll, 0, sizeof(s_ll));
 
-    // Выделение Spinlock для атомарности
     int lock_id = spin_lock_claim_unused(true);
     if (lock_id < 0) return false;
 
     s_ll.lock_num = lock_id;
     s_ll.lock = spin_lock_init((uint)lock_id);
 
-    // Сохранение конфигурации
     s_ll.data_pin        = cfg->data_pin;
     s_ll.clock_pin       = cfg->clock_pin;
     s_ll.latch_pin       = cfg->latch_pin;
@@ -250,7 +253,11 @@ bool display_ll_init(const display_ll_config_t *cfg)
     s_ll.refresh_rate_hz = cfg->refresh_rate_hz;
     s_ll.gamma_enabled   = true;
 
-    // Очистка буферов
+    // FIX #12: Определяем режим работы шины. 
+    // Если разрядов > 8, нам нужно 2 байта на сетки (всего 3 байта на кадр).
+    // Если разрядов <= 8, оставляем 1 байт на сетки для совместимости со старым железом.
+    s_ll.extended_grid_mode = (cfg->digit_count > 8);
+
     for (int i = 0; i < VFD_MAX_DIGITS; i++) {
         s_ll.seg_buffer[i] = 0;
         s_ll.brightness[i] = 255;
@@ -271,7 +278,6 @@ bool display_ll_start_refresh(void)
     uint32_t slots_per_sec = (uint32_t)s_ll.refresh_rate_hz * s_ll.digit_count;
     if (slots_per_sec == 0) return false;
 
-    // Вычисление периода слота (отрицательное значение для repeating_timer_us)
     int32_t period_us = -(int32_t)(1000000u / slots_per_sec);
     if (period_us == 0) period_us = -100;
 
@@ -298,10 +304,8 @@ void display_ll_stop_refresh(void)
         s_ll.clear_alarm = -1;
     }
     
-    // Гашение дисплея
-    ll_shift_out(0x00);
-    ll_shift_out(0x00);
-    ll_latch();
+    // Гашение дисплея (безопасный вызов через helper)
+    ll_shift_frame(0x0000, 0x00);
     
     s_ll.refresh_running = false;
 }
