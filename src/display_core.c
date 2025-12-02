@@ -7,13 +7,15 @@
 #include "hardware/adc.h"
 #include "hardware/rtc.h"
 
-#include <string.h>
+#include <string.h> // Для memcpy, memset
 #include <stdbool.h>
 #include <stdint.h>
 
 /*
  * High-Level Core.
- * FIX #23: Полная переработка логики точек (Static vs Blink).
+ * Реализация центральной логики дисплея.
+ * 
+ * Refactor #8: Использование memcpy/memset и вынос логики точек.
  */
 
 static display_state_t g_display_state;
@@ -33,10 +35,11 @@ display_state_t *const g_display = &g_display_state;
 
 #define DOT_DEFAULT_PERIOD_MS         1000 
 #define DOT_DEFAULT_BIT               7    
-// По умолчанию точка на индексе 1 (для 4-значных часов это XX.XX)
 #define DOT_DEFAULT_MASK              (1 << 1) 
 
-// ... (Вспомогательные функции блокировки FX - core_is_fx_segment_blocking и т.д. оставляем как в v1.1.1) ...
+// ============================================================================
+//  Вспомогательные функции
+// ============================================================================
 
 static bool core_is_fx_segment_blocking(void) {
     if (!g_display->fx_active) return false;
@@ -57,48 +60,53 @@ static bool core_does_fx_control_brightness(void) {
     }
 }
 
+/*
+ * Применение системной точки к сегменту.
+ * Возвращает модифицированный сегмент с включенным битом точки, если это необходимо.
+ */
+static inline vfd_segment_map_t core_apply_dots(uint8_t idx, vfd_segment_map_t seg)
+{
+    // Проверяем маску: должна ли быть точка на этом разряде?
+    if (g_display->dot_map & (1u << idx)) {
+        bool draw_dot = false;
+
+        if (g_display->dot_blink_enabled) {
+            // Режим мигания: точка горит только в фазе ON
+            if (g_display->dot_state) draw_dot = true;
+        } else {
+            // Режим статики: точка горит всегда
+            draw_dot = true;
+        }
+
+        if (draw_dot) {
+            seg |= (vfd_segment_map_t)(1u << g_display->dot_bit);
+        }
+    }
+    return seg;
+}
+
 static void core_push_brightness_to_ll(uint8_t level) {
     if (!display_ll_is_initialized()) return;
     display_ll_set_brightness_all(level);
 }
 
-/* 
- * FIX #23: Новая логика наложения точек.
- * Теперь точки накладываются, если установлен бит в dot_map.
- * Режим blinking определяет, мигает точка или горит постоянно.
- */
 static void core_push_content_to_ll(void)
 {
     if (!display_ll_is_initialized() || !g_display->initialized) return;
 
     uint8_t digits = g_display->digit_count;
+    // Защита от выхода за пределы массива
     if (digits > VFD_MAX_DIGITS) digits = VFD_MAX_DIGITS;
 
     for (uint8_t i = 0; i < digits; i++) {
         vfd_segment_map_t seg = g_display->content_buffer[i];
         
-        // Проверяем, должна ли быть точка на этом разряде
-        if (g_display->dot_map & (1u << i)) {
-            bool draw_dot = false;
-
-            if (g_display->dot_blink_enabled) {
-                // Режим мигания: рисуем только в фазе ON
-                if (g_display->dot_state) draw_dot = true;
-            } else {
-                // Режим статики: рисуем всегда
-                draw_dot = true;
-            }
-
-            if (draw_dot) {
-                seg |= (vfd_segment_map_t)(1u << g_display->dot_bit);
-            }
-        }
+        // Наложение точек вынесено в отдельную функцию (Refactor #8)
+        seg = core_apply_dots(i, seg);
         
         display_ll_set_digit_raw(i, seg);
     }
 }
-
-// ... (Функции core_read_adc_filtered, core_update_brightness_now, core_brightness_tick - без изменений) ...
 
 static uint16_t core_read_adc_filtered(uint16_t adc_pin) {
     uint16_t input = 0;
@@ -146,11 +154,8 @@ static void core_brightness_tick(absolute_time_t now) {
 
 static void core_dot_blink_tick(absolute_time_t now)
 {
-    // Тик таймера нужен только если включено мигание
     if (!g_display->dot_blink_enabled || g_display->digit_count == 0) return;
     if (g_display->ov_active) return;
-    
-    // Если эффектов нет или они не блокируют сегменты
     if (core_is_fx_segment_blocking()) return;
 
     uint32_t now_ms  = to_ms_since_boot(now);
@@ -182,10 +187,8 @@ void display_init(uint8_t digit_count)
     g_display->brightness_last_update = get_absolute_time();
     g_display->dot_period_ms = DOT_DEFAULT_PERIOD_MS;
     g_display->dot_last_toggle = get_absolute_time();
-    
-    // FIX #23: Инициализация карты точек
     g_display->dot_map = DOT_DEFAULT_MASK; 
-    g_display->dot_blink_enabled = true; // По умолчанию мигает
+    g_display->dot_blink_enabled = true; 
     g_display->dot_bit = DOT_DEFAULT_BIT;
 
     for(int i=0; i<VFD_MAX_DIGITS; i++) {
@@ -257,11 +260,8 @@ void display_set_night_mode(bool enable) {
     core_update_brightness_now();
 }
 
-/* FIX #23: Управление точками */
-
 void display_set_dot_blinking(bool enable) {
     g_display->dot_blink_enabled = enable;
-    // Сбрасываем таймер и состояние для синхронизации
     g_display->dot_state = false; 
     g_display->dot_last_toggle = get_absolute_time();
     core_push_content_to_ll();
@@ -274,9 +274,17 @@ void display_set_dots_config(uint16_t mask, bool blink) {
 
 void display_core_set_buffer(const vfd_segment_map_t *buf, uint8_t size) {
     if (!g_display->initialized || !buf) return;
-    uint8_t n = size > g_display->digit_count ? g_display->digit_count : size;
-    for (uint8_t i = 0; i < n; i++) g_display->content_buffer[i] = buf[i];
-    for (uint8_t i = n; i < g_display->digit_count; i++) g_display->content_buffer[i] = 0;
+    
+    uint8_t max_digits = g_display->digit_count;
+    uint8_t copy_len = (size > max_digits) ? max_digits : size;
+    
+    // Refactor #8: Использование memcpy для скорости и читаемости
+    memcpy(g_display->content_buffer, buf, copy_len);
+    
+    // Обнуляем оставшуюся часть буфера, если данные короче дисплея
+    if (copy_len < max_digits) {
+        memset(g_display->content_buffer + copy_len, 0, max_digits - copy_len);
+    }
 
     if (!display_is_overlay_running()) {
         if (!core_is_fx_segment_blocking()) {
@@ -319,5 +327,5 @@ void display_process(void) {
     }
 
     core_dot_blink_tick(now);
-    core_push_content_to_ll(); // Обновляет контент + точки (Static/Blink)
+    core_push_content_to_ll(); 
 }
