@@ -115,6 +115,15 @@ void display_set_auto_brightness(bool enable);
 /* Управление автоматическим миганием разделительных точек. */
 void display_set_dot_blinking(bool enable);
 
+
+
+/* 
+ * FIX #23: Настройка системных разделителей (точек).
+ * mask: Битовая маска разрядов, где должна гореть точка (например 0x0002 - точка на 1 разряде).
+ * blink: true - точки мигают, false - точки горят постоянно.
+ */
+void display_set_dots_config(uint16_t mask, bool blink);
+
 /* =====================
  *        СТАТУС
  * ===================== */

@@ -75,7 +75,7 @@ typedef struct display_state_s {
     volatile display_mode_t mode;
 
     /* --- Буферы контента --- */
-    vfd_segment_map_t content_buffer[VFD_MAX_DIGITS];       // Основной буфер
+    vfd_segment_map_t content_buffer[VFD_MAX_DIGITS];
     uint8_t           content_brightness[VFD_MAX_DIGITS];
 
     /* --- Snapshot --- */
@@ -86,25 +86,18 @@ typedef struct display_state_s {
     /* --- Финальный буфер --- */
     volatile uint8_t final_brightness[VFD_MAX_DIGITS];
 
-    /* =========================================================================
-       ДВИЖОК ЭФФЕКТОВ (FX ENGINE)
-       ======================================================================= */
-
+    /* --- Движок Эффектов (FX) --- */
     volatile bool      fx_active;
     volatile fx_type_t fx_type;
+    absolute_time_t    fx_start_time;
+    uint32_t           fx_duration_ms;
+    uint32_t           fx_frame_ms;
+    uint32_t           fx_elapsed_ms;
+    uint32_t           fx_total_steps;
+    uint32_t           fx_current_step;
+    uint8_t            fx_base_brightness;
 
-    absolute_time_t fx_start_time;
-    uint32_t        fx_duration_ms;
-    uint32_t        fx_frame_ms;
-    uint32_t        fx_elapsed_ms;
-    uint32_t        fx_total_steps;
-    uint32_t        fx_current_step;
-
-    uint8_t         fx_base_brightness;
-
-    /* Параметры эффектов */
-    
-    // Glitch
+    /* Параметры эффектов (сокращено для примера, оставляем как было) */
     bool              fx_glitch_active;
     uint32_t          fx_glitch_last_ms;
     uint32_t          fx_glitch_next_ms;
@@ -113,81 +106,63 @@ typedef struct display_state_s {
     uint8_t           fx_glitch_bit;
     vfd_segment_map_t fx_glitch_saved_digit;
 
-    // Matrix / Scanner
     uint32_t          fx_matrix_last_ms;
     uint32_t          fx_matrix_step;
     uint32_t          fx_matrix_total_steps;
     uint8_t           fx_matrix_min_percent;
     uint8_t           fx_matrix_brightness_percent[VFD_MAX_DIGITS];
 
-    // Morph
     vfd_segment_map_t fx_morph_start[VFD_MAX_DIGITS];
     vfd_segment_map_t fx_morph_target[VFD_MAX_DIGITS];
     uint32_t          fx_morph_step;
     uint32_t          fx_morph_steps;
 
-    // Dissolve
     uint8_t           fx_dissolve_order[VFD_MAX_DIGITS * 8];
     uint32_t          fx_dissolve_total_bits;
     uint32_t          fx_dissolve_step;
 
-    // Slot Machine / Other
     vfd_segment_map_t fx_target_buffer[VFD_MAX_DIGITS];
     uint32_t          fx_stage_step;
 
-    // Ping Pong
     int32_t           fx_pingpong_pos;
     bool              fx_pingpong_dir;
 
-    // Text FX
     char              fx_text_buffer[FX_TEXT_MAX_LEN];
     uint16_t          fx_text_len;
 
-    /* =========================================================================
-       ДВИЖОК ОВЕРЛЕЕВ (OVERLAYS)
-       ======================================================================= */
-
+    /* --- Движок Оверлеев --- */
     volatile bool           ov_active;
     volatile overlay_type_t ov_type;
+    absolute_time_t         ov_start_time;
+    uint32_t                ov_duration_ms;
+    uint32_t                ov_frame_ms;
+    uint32_t                ov_step;
+    uint32_t                ov_loop;
 
-    absolute_time_t ov_start_time;
-    uint32_t        ov_duration_ms;
-    uint32_t        ov_frame_ms;
-    uint32_t        ov_step;
-    uint32_t        ov_loop;
-
-    /* =========================================================================
-       УПРАВЛЕНИЕ ЯРКОСТЬЮ (SYSTEM)
-       ======================================================================= */
-
+    /* --- Управление Яркостью --- */
     volatile bool auto_brightness_enabled;
     volatile bool night_mode_enabled;
-
-    uint8_t user_brightness_level;
-    uint8_t night_brightness;
-    uint8_t night_start_hour;
-    uint8_t night_end_hour;
-    
+    uint8_t  user_brightness_level;
+    uint8_t  night_brightness;
+    uint8_t  night_start_hour;
+    uint8_t  night_end_hour;
     uint16_t adc_pin;
     absolute_time_t brightness_last_update;
-    uint32_t brightness_update_period_ms;
+    uint32_t        brightness_update_period_ms;
 
     /* =========================================================================
-       ИНДИКАЦИЯ (DOTS)
+       ИНДИКАЦИЯ (DOTS) - FIX #23
        ======================================================================= */
 
-    volatile bool dot_blink_enabled;
-    volatile bool dot_state;
+    volatile bool dot_blink_enabled;  // true = blink, false = static on (if mask set)
+    volatile bool dot_state;          // current toggle state
     uint32_t      dot_period_ms;
     absolute_time_t dot_last_toggle;
 
-    uint8_t dot_digit_positions[2];
-    uint8_t dot_bit;
+    uint16_t      dot_map;            // Bitmask: 1 = dot active on this digit
+    uint8_t       dot_bit;            // Bit index of the dot segment (usually 7)
 
-    /* =========================================================================
-       CALLBACKS
-       ======================================================================= */
-
+    /* --- Callbacks --- */
     void (*on_effect_finished)(fx_type_t type);
     void (*on_overlay_finished)(overlay_type_t type);
 
