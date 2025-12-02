@@ -109,22 +109,39 @@ static bool overlay_start_common(overlay_type_t type, uint32_t frame_ms)
     return true;
 }
 
+/*
+ * Вспомогательная функция расчета времени кадра.
+ * duration: желаемая общая длительность.
+ * steps: количество шагов в анимации.
+ * def: значение по умолчанию, если duration == 0.
+ */
+static inline uint32_t calc_frame_ms(uint32_t duration, uint32_t steps, uint32_t def)
+{
+    if (duration == 0) return def;
+    uint32_t frame = duration / steps;
+    return (frame < 20) ? 20 : frame; // Ограничение мин. скорости (20ms)
+}
+
+
 bool display_overlay_boot(uint32_t duration_ms)
 {
-    (void)duration_ms; // Игнорируем, используем фиксированную логику
-    return overlay_start_common(OV_BOOT, 150);
+    // BOOT: проход цифр 0..9 (10 шагов)
+    uint32_t frame = calc_frame_ms(duration_ms, 10, 150);
+    return overlay_start_common(OV_BOOT, frame);
 }
 
 bool display_overlay_wifi(uint32_t duration_ms)
 {
-    (void)duration_ms;
-    return overlay_start_common(OV_WIFI, 200);
+    // WIFI: 5 миганий (ON/OFF), итого 10 шагов
+    uint32_t frame = calc_frame_ms(duration_ms, 10, 200);
+    return overlay_start_common(OV_WIFI, frame);
 }
 
 bool display_overlay_ntp(uint32_t duration_ms)
 {
-    (void)duration_ms;
-    return overlay_start_common(OV_NTP, 150);
+    // NTP: Змейка длиной 6 кадров, 3 повтора = 18 шагов
+    uint32_t frame = calc_frame_ms(duration_ms, 18, 150);
+    return overlay_start_common(OV_NTP, frame);
 }
 
 // ============================================================================
